@@ -3,6 +3,36 @@ const canvas=$("plan"), ctx=canvas.getContext("2d"), catalog=readCatalog(CSV);
 const state={image:null,map:null,layer:true,scale:null,points:[],measuring:false,selection:null,
   name:"",mode:"",design:null,flow:null,activeZone:null,loadId:0,server:false};
 let overlayCanvas=null;
+let editMode=null, vertices=[], draftMask=null, draftLayer=null, pickPixels=null;
+const undoMaps=[];
+function resetEdit(){
+  editMode=null;vertices=[];draftMask=null;draftLayer=null;
+  $("saveArea").disabled=true;$("cancelArea").hidden=true;
+  $("editHint").textContent="Выберите способ и отметьте область на плане.";
+}
+function rememberMap(){
+  undoMaps.push(state.map);
+  if(undoMaps.length>12)undoMaps.shift();
+  $("undoArea").disabled=false;
+}
+function beginEdit(mode){
+  resetEdit();editMode=mode;state.layer=true;state.measuring=false;$("meterBox").hidden=true;
+  $("cancelArea").hidden=false;
+  $("editHint").textContent=mode==="pick"?"Нажмите внутри однотонной замкнутой области.":"Нажмите по очереди на углы контура, затем примените его.";
+  tell($("editHint").textContent);paint();
+}
+function previewMask(mask){
+  draftMask=mask;draftLayer=null;
+  $("saveArea").disabled=!mask?.some(Boolean);
+  if(!$("saveArea").disabled){
+    const m=state.map;
+    draftLayer=document.createElement("canvas");draftLayer.width=m.width;draftLayer.height=m.height;
+    const c=draftLayer.getContext("2d"),img=c.createImageData(m.width,m.height);
+    for(let i=0;i<mask.length;i++)if(mask[i])img.data.set([181,44,146,140],i*4);
+    c.putImageData(img,0,0);
+  }
+  paint();
+}
 function tell(message){$("status").textContent=message;}
 function clearDesign(){
   state.design=null;state.activeZone=null;
@@ -15,6 +45,14 @@ function paint(){
   ctx.drawImage(state.image,0,0,canvas.width,canvas.height);
   if(state.layer && overlayCanvas){ctx.save();ctx.globalAlpha=0.53;ctx.imageSmoothingEnabled=false;ctx.drawImage(overlayCanvas,0,0,canvas.width,canvas.height);ctx.restore();}
   if(state.layer && state.design && typeof paintHeads==="function")paintHeads();
+  if(state.layer && draftLayer)ctx.drawImage(draftLayer,0,0,canvas.width,canvas.height);
+  if(editMode==="polygon" && vertices.length){
+    ctx.save();ctx.scale(canvas.width/state.map.width,canvas.height/state.map.height);
+    ctx.strokeStyle="#932071";ctx.fillStyle="#fff";ctx.lineWidth=1.3;
+    ctx.beginPath();vertices.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.stroke();
+    for(const [x,y] of vertices){ctx.beginPath();ctx.arc(x,y,2,0,2*Math.PI);ctx.fill();ctx.stroke();}
+    ctx.restore();
+  }
   let result;
   if(!state.layer) result="Исходное изображение. Для просмотра эскиза нажмите «Разметка».";
   else if(!state.scale) result="Разметка участка готова. Укажите масштаб для расстановки сопел.";
@@ -37,7 +75,10 @@ function renderMask(){
     const rgb=parseInt(color.slice(1),16);const p=i*4;
     data.data[p]=rgb>>16;data.data[p+1]=(rgb>>8)&255;data.data[p+2]=rgb&255;
     const boundary=i%map.width===0 || map.ids[i-1]!==id || map.ids[i-map.width]!==id;
-    data.data[p+3]=boundary || state.selection===id ? 255:165;
+    const x=i%map.width,y=Math.floor(i/map.width);
+    const drip=map.regions[id].kind===5;
+    const stripe=drip && (y+Math.round(1.5*Math.sin(x/7)))%7===0 && x%9<6;
+    data.data[p+3]=boundary || stripe || state.selection===id ? 255 : drip ? 55 : 165;
   }
   dc.putImageData(data,0,0);
 }
@@ -68,12 +109,13 @@ function refresh(){
   if(typeof designControls==="function")designControls();
 }
 function loadImage(image,name,meta={}){
-  clearDesign();
+  clearDesign();resetEdit();undoMaps.length=0;$("undoArea").disabled=true;
   const factor=Math.min(1,1600/Math.max(image.width,image.height));
   canvas.width=Math.max(1,Math.round(image.width*factor));canvas.height=Math.max(1,Math.round(image.height*factor));
   const down=Math.min(1,420/Math.max(canvas.width,canvas.height));
   const sample=document.createElement("canvas");sample.width=Math.max(1,Math.round(canvas.width*down));sample.height=Math.max(1,Math.round(canvas.height*down));
   const sc=sample.getContext("2d");sc.fillStyle="white";sc.fillRect(0,0,sample.width,sample.height);sc.drawImage(image,0,0,sample.width,sample.height);
+  pickPixels=null;
   const map=detectRegions(sc.getImageData(0,0,sample.width,sample.height).data,sample.width,sample.height);
   if(meta.words) useTextLabels(map,meta.words);
   if(meta.polygons && typeof applyPolygons==="function")applyPolygons(map,meta.polygons);
@@ -122,7 +164,7 @@ async function upload(file){
       ({image,meta}=await readPdf(file));
     }else image=await decodeImage(file);
     if(id!==state.loadId)return;
-    loadImage(image,file.name,meta);tell(state.map.regions.length?"Разметка готова. Переключайте слои для сравнения.":"Не удалось уверенно выделить области. Попробуйте план с цветными контурами или подписями.");
+    loadImage(image,file.name,meta);tell(state.map.regions.length?"Разметка готова. Переключайте слои для сравнения.":"Не удалось уверенно выделить области. Откройте «Разметить контур» и укажите области полива.");
   }catch(e){if(id===state.loadId)tell("Не удалось открыть план. "+(e.message||"Проверьте формат файла."));}
 }
 $("kind").replaceChildren(...names.map((s,i)=>new Option(s,i)));
@@ -131,12 +173,54 @@ $("file").onchange=e=>{upload(e.target.files[0]);e.target.value="";};
 document.addEventListener("dragover",e=>e.preventDefault());
 document.addEventListener("drop",e=>{e.preventDefault();upload(e.dataTransfer.files[0]);});
 $("demo").onclick=demonstration;
-$("original").onclick=()=>{state.layer=false;paint();};$("overlay").onclick=()=>{state.layer=true;paint();};
+$("original").onclick=()=>{resetEdit();state.layer=false;paint();};$("overlay").onclick=()=>{state.layer=true;paint();};
 $("region").onchange=()=>{state.selection=Number($("region").value);refresh();};
-$("change").onclick=()=>{const r=state.map.regions[Number($("region").value)];if(!r)return;r.kind=Number($("kind").value);r.evidence="Уточнено вручную";clearDesign();refresh();tell("Тип области изменён.");};
-$("measure").onclick=()=>{state.measuring=!state.measuring;state.points=[];$("meterBox").hidden=true;paint();tell(state.measuring?"Нажмите на начало, затем на конец известного отрезка.":"Измерение отменено.");};
+$("change").onclick=()=>{
+  const id=Number($("region").value),kind=Number($("kind").value);
+  if(!state.map.regions[id] || state.map.regions[id].kind===kind)return;
+  rememberMap();state.map={...state.map,regions:state.map.regions.map(r=>r.id===id?{...r,kind,evidence:"Уточнено вручную"}:r)};
+  resetEdit();clearDesign();refresh();tell("Тип области изменён.");
+};
+$("pickArea").onclick=()=>beginEdit("pick");
+$("drawArea").onclick=()=>beginEdit("polygon");
+$("cancelArea").onclick=()=>{resetEdit();paint();};
+$("saveArea").onclick=()=>{
+  if(!draftMask?.some(Boolean))return;
+  rememberMap();state.map=editRegionMap(state.map,draftMask,Number($("contourKind").value));
+  state.selection=null;resetEdit();clearDesign();refresh();tell("Контур применён.");
+};
+$("undoArea").onclick=()=>{
+  if(!undoMaps.length)return;
+  state.map=undoMaps.pop();state.selection=null;resetEdit();clearDesign();refresh();
+  $("undoArea").disabled=!undoMaps.length;tell("Последняя правка отменена.");
+};
+$("measure").onclick=()=>{resetEdit();state.measuring=!state.measuring;state.points=[];$("meterBox").hidden=true;paint();tell(state.measuring?"Нажмите на начало, затем на конец известного отрезка.":"Измерение отменено.");};
 canvas.onclick=e=>{
   const b=canvas.getBoundingClientRect(),x=(e.clientX-b.left)/b.width*canvas.width,y=(e.clientY-b.top)/b.height*canvas.height;
+  if(editMode){
+    const m=state.map,gx=x*m.width/canvas.width,gy=y*m.height/canvas.height;
+    if(editMode==="polygon"){
+      vertices.push([gx,gy]);previewMask(polygonMask(vertices,m.width,m.height));
+    }else{
+      if(!pickPixels){
+        const buffer=document.createElement("canvas");buffer.width=canvas.width;buffer.height=canvas.height;
+        const c=buffer.getContext("2d");c.fillStyle="white";c.fillRect(0,0,buffer.width,buffer.height);
+        c.drawImage(state.image,0,0,buffer.width,buffer.height);
+        pickPixels=c.getImageData(0,0,buffer.width,buffer.height).data;
+      }
+      const full=enclosedMask(pickPixels,canvas.width,canvas.height,x,y);
+      let mask=null;
+      if(full){
+        mask=new Uint8Array(m.ids.length);
+        for(let j=0;j<m.height;j++)for(let i=0;i<m.width;i++)
+          mask[j*m.width+i]=full[Math.floor((j+.5)*canvas.height/m.height)*canvas.width+Math.floor((i+.5)*canvas.width/m.width)];
+        if(!mask.some(Boolean))mask=null;
+      }
+      previewMask(mask);
+      tell(mask?"Проверьте подсвеченную область и нажмите «Применить контур».":"Граница не замкнулась. Выберите «Обвести точками».");
+    }
+    return;
+  }
   if(state.measuring){
     if(state.points.length===2)state.points=[];
     state.points.push([x,y]);paint();
@@ -153,6 +237,6 @@ $("setMeters").onclick=()=>{
   state.scale=meters/px;state.scaleEvidence=meters+" м по отмеченному вами отрезку.";state.measuring=false;$("meterBox").hidden=true;
   state.layer=true;clearDesign();refresh();tell("Масштаб применён.");
 };
-$("grid").onclick=()=>{if(!state.grid)return;state.scale=1/state.grid;state.scaleEvidence="1 метр на клетку, подтверждено вами.";state.measuring=false;state.points=[];$("meterBox").hidden=true;state.layer=true;clearDesign();refresh();tell("Масштаб применён по сетке.");};
+$("grid").onclick=()=>{if(!state.grid)return;resetEdit();state.scale=1/state.grid;state.scaleEvidence="1 метр на клетку, подтверждено вами.";state.measuring=false;state.points=[];$("meterBox").hidden=true;state.layer=true;clearDesign();refresh();tell("Масштаб применён по сетке.");};
 demonstration();
 initializeInputs();
