@@ -8,7 +8,7 @@
 <div class="paper"><canvas id="plan" aria-label="Интерактивный план участка"></canvas></div><div id="caption"></div></section>
 <aside><h2>Участок</h2><div id="summary"></div><p class="note" id="method"></p>
 <details id="corrections"><summary>Исправить область</summary><p>Выберите область здесь или нажмите на неё на плане.</p><select aria-label="Область" id="region"></select><select aria-label="Тип области" id="kind"></select><button id="change">Применить</button></details>
-<h2>Масштаб</h2><p id="scaleInfo"></p><button id="measure">Указать по двум точкам</button>
+<h2>Масштаб</h2><p id="scaleInfo"></p><button id="grid" hidden>В сетке 1 клетка = 1 м</button> <button id="measure">Указать по двум точкам</button>
 <div id="meterBox" hidden><label>Расстояние между точками, м <input id="meters" type="number" step="any" min="0.01" max="2000"></label><button id="setMeters">Сохранить размер</button></div>
 <div id="design"></div></aside></div><section id="report"></section></main>
 <script>
@@ -17,5 +17,6 @@ const CSV=/*CSV*/;
 /*CATALOG*/
 /*RECOGNITION*/
 /*PLANNER*/
+/*INPUT*/
 /*UI*/
 </script></html>

@@ -6,8 +6,23 @@ const palette = ["","#4eae68","#c78c41","#348bc0","#687984"];
 function detectRegions(pixels, width, height) {
   const count = width*height;
   const raw = new Uint8Array(count);
+  // Some drawings tint even non-irrigated space. Separate a dominant pastel
+  // paper colour from visibly different grass and planting hatch patterns.
+  const histogram=new Map();
+  for(let p=0;p<pixels.length;p+=4){
+    const r=pixels[p],g=pixels[p+1],b=pixels[p+2];
+    if(g<220 || r<185 || b<180 || g-r<9 || g-b<9)continue;
+    const key=(r>>2)*4096+(g>>2)*64+(b>>2);
+    histogram.set(key,(histogram.get(key)||0)+1);
+  }
+  const common=[...histogram].sort((a,b)=>b[1]-a[1])[0];
+  const paper=common && common[1]>count*.055 ? [
+    (common[0]>>12)*4+1,(common[0]>>6&63)*4+1,(common[0]&63)*4+1
+  ]:null;
   for (let i=0;i<count;i++) {
     const [r,g,b] = pixels.subarray(i*4,i*4+3);
+    if(paper && Math.max(Math.abs(r-paper[0]),Math.abs(g-paper[1]),Math.abs(b-paper[2]))<=6) continue;
+    if(paper && g>185 && r-b>6 && g-r<31 && g-b>11){raw[i]=2;continue;}
     if (b-r>15 && b-g>1 && g-r>-5) raw[i]=3;
     else if (g-r>3 && g-b>12) raw[i]=(g<128 || (r/g<0.75 && g<177))?2:1;
     else if (r-b>36 && r-g>8 && g>100 && r-g<62) raw[i]=2;
@@ -39,6 +54,11 @@ function detectRegions(pixels, width, height) {
     const id=regions.length;
     for(let j=0;j<end;j++) ids[queue[j]]=id;
     regions.push({id,kind,count:end,x:xSum/end,y:ySum/end,minX,minY,maxX,maxY,evidence:"Цвет и контур"});
+  }
+  const vegetated=regions.filter(r=>r.kind===1||r.kind===2).reduce((n,r)=>n+r.count,0);
+  if(vegetated<count*.055){
+    // Small isolated green symbols on a sparse technical plan commonly denote trees.
+    for(const r of regions)if(r.kind===1 && r.count<count*.01) {r.kind=2;r.evidence="Отдельный символ растительности";}
   }
   return {width,height,ids,regions};
 }

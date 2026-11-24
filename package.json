@@ -1,0 +1,11 @@
+{
+  "name": "deltser-autopoliv",
+  "private": true,
+  "scripts": {
+    "build": "node tools/web_build.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "pdfjs-dist": "5.6.205"
+  }
+}

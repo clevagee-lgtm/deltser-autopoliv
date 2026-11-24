@@ -73,6 +73,14 @@ function loadImage(image,name,meta={}){
   if(meta.polygons && typeof applyPolygons==="function")applyPolygons(map,meta.polygons);
   Object.assign(state,{image,name,map,mode:meta.mode||"Локальный анализ",scale:meta.scale??null,scaleEvidence:meta.scaleEvidence||"",
     method:meta.method||"Цветовые подсказки. Белые зоны и объекты без уверенной границы остаются без заливки.",flow:null,points:[],selection:null,layer:true,measuring:false});
+  state.grid=meta.scale?null:findSquareGrid(image);$("grid").hidden=!state.grid;
+  if(state.grid && meta.gridUnit>0 && meta.gridUnit<=10){
+    state.scale=meta.gridUnit/state.grid;state.scaleEvidence="Из подписи и шага сетки: "+meta.gridUnit+" м на клетку.";
+  }else if(meta.reference){
+    const ref=meta.reference,a=ref.start,b=ref.end;
+    const length=Math.hypot((a[0]-b[0])*canvas.width,(a[1]-b[1])*canvas.height);
+    if(length>=canvas.width*.06 && ref.meters>0){state.scale=ref.meters/length;state.scaleEvidence="Оценка по размерной линии «"+ref.label+"». Проверьте её на плане.";state.points=[[a[0]*canvas.width,a[1]*canvas.height],[b[0]*canvas.width,b[1]*canvas.height]];}
+  }
   $("meterBox").hidden=true;$("meters").value="";$("corrections").open=false;
   refresh();
 }
@@ -103,7 +111,10 @@ async function upload(file){
   try{
     let image,meta={};
     if(state.server && typeof serverPlan==="function")({image,meta}=await serverPlan(file));
-    else image=await decodeImage(file);
+    else if(file.type==="application/pdf" || /\.pdf$/i.test(file.name)){
+      if(document.documentElement.dataset.pdf!=="true")throw new Error("Для PDF откройте веб-версию или выберите изображение.");
+      ({image,meta}=await readPdf(file));
+    }else image=await decodeImage(file);
     if(id!==state.loadId)return;
     loadImage(image,file.name,meta);tell(state.map.regions.length?"Разметка готова. Переключайте слои для сравнения.":"Не удалось уверенно выделить области. Попробуйте план с цветными контурами или подписями.");
   }catch(e){if(id===state.loadId)tell("Не удалось открыть план. "+(e.message||"Проверьте формат файла."));}
@@ -136,4 +147,6 @@ $("setMeters").onclick=()=>{
   state.scale=meters/px;state.scaleEvidence=meters+" м по отмеченному вами отрезку.";state.measuring=false;$("meterBox").hidden=true;
   clearDesign();refresh();tell("Масштаб применён.");
 };
+$("grid").onclick=()=>{if(!state.grid)return;state.scale=1/state.grid;state.scaleEvidence="1 метр на клетку, подтверждено вами.";state.measuring=false;state.points=[];$("meterBox").hidden=true;clearDesign();refresh();tell("Масштаб применён по сетке.");};
 demonstration();
+initializeInputs();
