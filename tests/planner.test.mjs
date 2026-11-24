@@ -146,3 +146,23 @@ test('spacing repair turns an existing head while preserving wet grass and the s
   assert.deepEqual(wet,actual);
   assert.ok(before.every((n,i)=>!n || wet[i]));
 });
+test('layout comparison retains meaningful choices and rejects a coverage regression',()=>{
+  function draft(n,outsideM2,hit=80,missing=0,pathM2=0){
+    return {heads:Array(n),outsideM2,hit,spacing:{missing},pathM2};
+  }
+  const base=draft(20,40),lessSpill=draft(21,15);
+  assert.deepEqual(Array.from(c.comparableLayouts(base,[draft(21,44),draft(10,0,79),draft(10,2,80,1),draft(5,5,80,0,1),lessSpill])),[base,lessSpill]);
+  const smaller=draft(18,39);
+  assert.deepEqual(Array.from(c.comparableLayouts(base,[smaller,draft(18,39)])),[smaller]);
+});
+test('regrouping the selected layout clears old supply warnings and zone numbers',()=>{
+  const d=c.proposeHeads(map(),table,.22,.22,.1);
+  const before=d.heads.map(h=>[h.model,h.x,h.y,h.start]);
+  assert.ok(d.warnings.length);
+  c.groupZones(d,12);
+  assert.ok(d.zones.length && d.zones.every(z=>z.flow<=12));
+  c.groupZones(d,null);
+  assert.equal(d.zones.length,0);assert.equal(d.warnings.length,0);
+  assert.ok(d.heads.every(h=>h.zone===null));
+  assert.deepEqual(d.heads.map(h=>[h.model,h.x,h.y,h.start]),before);
+});

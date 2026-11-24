@@ -279,9 +279,11 @@ function completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted){
     if(!head || head.score<1.25)continue;
     add(head);
   }
-  const anchorOffsets=[];
+  const anchorOffsets=[],usedOffsets=new Set(["0,0"]);
   for(const d of [.75,1.15,1.65,2.9,3.9,5.5])for(let a=0;a<32;a++){
-    anchorOffsets.push([Math.round(d*Math.cos(a*Math.PI/16)/scaleX),Math.round(d*Math.sin(a*Math.PI/16)/scaleY)]);
+    const offset=[Math.round(d*Math.cos(a*Math.PI/16)/scaleX),Math.round(d*Math.sin(a*Math.PI/16)/scaleY)];
+    const key=offset.join(",");
+    if(!usedOffsets.has(key)){usedOffsets.add(key);anchorOffsets.push(offset);}
   }
   // Give boundary cells beside hard exclusions first choice of a legal sector.
   const boundary=[],interior=[];
@@ -311,46 +313,78 @@ function completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted){
     // be reached within the spill budget. Keep the measured shortfall visible.
     if(best)add(best);
   }
-  // Tighten a finishing sector around the cells that no other nozzle reaches.
-  // Each accepted replacement preserves coverage and cannot increase off-lawn area.
-  for(let index=heads.length-1;index>=initialCount;index--){
-    const head=heads[index];
-    mark(head,-1);
-    let reach=0, spill=0, needed=false;
-    const bounds=Array.from({length:rays},()=>0);
-    visitSector(head,map,scaleX,scaleY,i=>{
-      if(wet[i])return;
-      if(!turf[i]){spill++;return;}
-      needed=true;
-      const dx=(i%map.width+.5-head.x)*scaleX,dy=(Math.floor(i/map.width)+.5-head.y)*scaleY;
-      const distance=Math.hypot(dx,dy);
-      reach=Math.max(reach,distance);
-      if(!distance)return;
-      const angle=(Math.atan2(dy,dx)*180/Math.PI+360)%360;
-      for(let k=0;k<rays;k++){
-        let delta=(angle-k*360/rays+360)%360;
-        if(delta>360-1e-8)delta=0;
-        bounds[k]=Math.max(bounds[k],delta);
-      }
-    });
-    if(!needed){heads.splice(index,1);continue;}
-    let best=head;
-    let bestArea=head.radius**2*head.arc;
-    for(const nozzle of options){
-      const area=nozzle.radius**2*nozzle.arc;
-      if(nozzle.radius+1e-9<reach || area>=bestArea)continue;
-      for(let k=0;k<(nozzle.arc===360?1:rays);k++){
-        if(bounds[k]>nozzle.arc+1e-9)continue;
-        const trial={...head,...nozzle,start:k*360/rays,rPx:nozzle.radius/scaleX};
-        if(!permitted(trial))continue;
-        let off=0;
-        visitSector(trial,map,scaleX,scaleY,i=>{if(!wet[i] && !turf[i])off++;});
-        if(off<=spill && (off<spill || area<bestArea)){best=trial;bestArea=area;spill=off;}
+  // Each replacement must still reach every cell and dependent head unique to it.
+  function tighten(first,preserveLinks){
+    const incoming=new Map();
+    if(preserveLinks){
+      for(const target of heads){
+        incoming.set(target,heads.reduce((n,h)=>n+Number(reachesHead(h,target,scaleX,scaleY)),0));
       }
     }
-    heads[index]=best;mark(best,1);
+    for(let index=heads.length-1;index>=first;index--){
+      const head=heads[index], bounds=new Float64Array(rays);
+      let reach=0, spill=0, needed=false;
+      function requirePoint(x,y){
+        needed=true;
+        const dx=(x-head.x)*scaleX,dy=(y-head.y)*scaleY;
+        const distance=Math.hypot(dx,dy);
+        reach=Math.max(reach,distance);
+        if(!distance)return;
+        const angle=(Math.atan2(dy,dx)*180/Math.PI+360)%360;
+        for(let k=0;k<rays;k++){
+          let delta=(angle-k*360/rays+360)%360;
+          if(delta>360-1e-8)delta=0;
+          bounds[k]=Math.max(bounds[k],delta);
+        }
+      }
+      mark(head,-1);
+      visitSector(head,map,scaleX,scaleY,i=>{
+        if(wet[i])return;
+        if(turf[i])requirePoint(i%map.width+.5,Math.floor(i/map.width)+.5);
+        else spill++;
+      });
+      if(preserveLinks){
+        for(const target of heads){
+          if(!reachesHead(head,target,scaleX,scaleY))continue;
+          if(incoming.get(target)===1)requirePoint(target.x,target.y);
+          incoming.set(target,incoming.get(target)-1);
+        }
+      }
+      if(!needed){heads.splice(index,1);continue;}
+      let best=head,bestArea=head.radius**2*head.arc;
+      const originalArea=bestArea;
+      for(const nozzle of options){
+        const area=nozzle.radius**2*nozzle.arc;
+        if(nozzle.radius+1e-9<reach || area>(preserveLinks?originalArea:bestArea))continue;
+        if(preserveLinks && !incoming.get(head) && spacingException(head,map)
+          && !spacingException({...head,...nozzle},map))continue;
+        for(let k=0;k<(nozzle.arc===360?1:rays);k++){
+          if(bounds[k]>nozzle.arc+1e-9)continue;
+          if(!spill && area>=bestArea)continue;
+          const trial={...head,...nozzle,start:k*360/rays,rPx:nozzle.radius/scaleX};
+          if(!permitted(trial))continue;
+          let off=0;
+          visitSector(trial,map,scaleX,scaleY,i=>{
+            if(!wet[i] && !turf[i])off++;
+            return off<=spill;
+          });
+          if(off<spill || (off===spill && area<bestArea)){
+            best=trial;bestArea=area;spill=off;
+          }
+        }
+      }
+      if(preserveLinks){
+        incoming.set(best,incoming.get(head));
+        for(const target of heads){
+          if(reachesHead(best,target,scaleX,scaleY))incoming.set(target,incoming.get(target)+1);
+        }
+      }
+      heads[index]=best;mark(best,1);
+    }
   }
+  tighten(initialCount,false);
   improveSpacing(map,options,heads,scaleX,scaleY,turf,wet,allowPaths,permitted);
+  tighten(0,true);
   let total=0,hit=0,outside=0,pathCells=0;
   const dryCells=[];
   for(let i=0;i<turf.length;i++){
@@ -360,7 +394,7 @@ function completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted){
   }
   return {total,hit,dryCells,dryM2:dryCells.length*scaleX*scaleY,coverage:total?Math.floor(1000*hit/total)/10:null,pathM2:pathCells*scaleX*scaleY,outsideM2:outside*scaleX*scaleY};
 }
-function proposeHeads(map,table,scaleX,scaleY,flowLimit,allowPaths=false) {
+function proposeHeads(map,table,scaleX,scaleY,flowLimit,allowPaths=false,minInside=.88) {
   const heads=[],warnings=[],zones=[];
   if(!(scaleX>0 && scaleY>0))return {heads,warnings:["Укажите масштаб."],zones};
   const inZone=(x,y,id)=>x>=0&&y>=0&&x<map.width&&y<map.height&&map.ids[Math.floor(y)*map.width+Math.floor(x)]===id;
@@ -423,7 +457,7 @@ function proposeHeads(map,table,scaleX,scaleY,flowLimit,allowPaths=false) {
             const n=nozzle.arc/360*32;
             let inside=0;
             for(let j=0;j<n;j++)inside+=rays[(offset+j)%32];
-            if(inside/n<.88)continue;
+            if(inside/n<minInside)continue;
             const score=inside-4*(n-inside);
             if(!best||score>best.score){
               const trial={...nozzle,x,y,rPx:nozzle.radius/scaleX,start:offset*360/32,score,region:reg.id};
@@ -438,6 +472,17 @@ function proposeHeads(map,table,scaleX,scaleY,flowLimit,allowPaths=false) {
   }
   const coverage=completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted);
   if(coverage.hit<coverage.total)warnings.push("Часть газона осталась без покрытия. Проверьте границы областей. Для оставшихся ячеек не удалось подобрать сектор в пределах ограничений эскиза.");
+  const spacing=checkHeadSpacing(heads,map,scaleX,scaleY);
+  const result={heads,zones,warnings,spacing,...coverage};
+  groupZones(result,flowLimit);
+  return result;
+}
+const supplyWarning="Есть сопла, расход которых превышает доступную подачу.";
+function groupZones(result,flowLimit){
+  const {heads}=result;
+  const zones=result.zones=[];
+  const warnings=result.warnings=result.warnings.filter(text=>text!==supplyWarning);
+  for(const h of heads)h.zone=null;
   if(flowLimit>0){
     // Preserve spatial order. A zone never exceeds the entered working capacity.
     let zone=null;
@@ -448,10 +493,8 @@ function proposeHeads(map,table,scaleX,scaleY,flowLimit,allowPaths=false) {
       }
       h.zone=zone.id;zone.n++;zone.flow=Math.round((zone.flow+h.flow)*100)/100;
     }
-    if(heads.some(h=>!h.zone))warnings.push("Есть сопла, расход которых превышает доступную подачу.");
+    if(heads.some(h=>!h.zone))warnings.push(supplyWarning);
   }
-  const spacing=checkHeadSpacing(heads,map,scaleX,scaleY);
-  return {heads,zones,warnings,spacing,...coverage};
 }
 function zoneFamily(h){
   return h.model==="MP-800SR" || h.bar===2.1 ? h.model : "MP";
@@ -459,11 +502,60 @@ function zoneFamily(h){
 const planColors=["#127f98","#8050a5","#ad681f","#228152","#a14258","#426ab2"];
 let playback=null;
 function stopPlayback(){clearInterval(playback);playback=null;}
+function calculateLayout(minInside){
+  const m=state.map;
+  return proposeHeads(m,catalog,state.scale*canvas.width/m.width,state.scale*canvas.height/m.height,
+    state.flow,$("waterPaths").checked,minInside);
+}
 function generate(){
   clearDesign();
-  if(!state.scale)return;
-  const m=state.map;
-  state.design=proposeHeads(m,catalog,state.scale*canvas.width/m.width,state.scale*canvas.height/m.height,state.flow,$("waterPaths").checked);
+  if(state.scale)state.design=calculateLayout(.88);
+}
+function comparableLayouts(base,candidates){
+  const viable=[base,...candidates.filter(d=>d.hit>=base.hit && d.spacing.missing<=base.spacing.missing
+    && d.pathM2<=base.pathM2+1e-8)];
+  const dominates=(a,b)=>a.heads.length<=b.heads.length && a.outsideM2<=b.outsideM2+1e-8 &&
+    a.hit>=b.hit && a.spacing.missing<=b.spacing.missing;
+  return viable.filter((d,i)=>!viable.some((other,j)=>i!==j && dominates(other,d)
+    && (!dominates(d,other) || j<i))).sort((a,b)=>a.heads.length-b.heads.length || a.outsideM2-b.outsideM2);
+}
+function layoutChoices(panel){
+  if(state.variants){
+    if(state.variants.length===1){
+      const note=document.createElement("p");note.className="note";
+      note.textContent="Сравнение завершено. Выбран лучший из рассчитанных вариантов по покрытию, доливу, числу сопел и выходу за газон.";panel.append(note);
+      return;
+    }
+    const label=document.createElement("label");label.textContent="Сопла и площадь полива за газоном";
+    const select=document.createElement("select");
+    for(const [i,result] of state.variants.entries()){
+      const area=result.outsideM2.toLocaleString("ru",{maximumFractionDigits:1});
+      select.add(new Option(result.heads.length+" сопел · "+area+" м² за газоном",String(i)));
+    }
+    select.selectedIndex=state.variants.indexOf(state.design);
+    select.onchange=()=>{
+      stopPlayback();state.activeZone=null;state.layer=true;
+      state.design=state.variants[select.selectedIndex];designControls();
+    };
+    label.append(select);panel.append(label);
+    return;
+  }
+  const compare=document.createElement("button");compare.type="button";
+  compare.textContent="Сравнить варианты расстановки";
+  compare.onclick=async()=>{
+    const base=state.design;
+    compare.disabled=true;compare.textContent="Сравниваем…";
+    const alternatives=[];
+    for(const fit of [.94,.98]){
+      await new Promise(resolve=>setTimeout(resolve,30));
+      if(state.design!==base || !compare.isConnected)return;
+      alternatives.push(calculateLayout(fit));
+    }
+    state.variants=comparableLayouts(base,alternatives);
+    state.design=state.variants.includes(base)?base:state.variants[0];
+    stopPlayback();state.activeZone=null;state.layer=true;designControls();
+  };
+  panel.append(compare);
 }
 function paintHeads(){
   const m=state.map;
@@ -521,11 +613,15 @@ function designControls(){
     d.append(audit);
   }
   if(n){
+    layoutChoices(d);
     const label=document.createElement("label");label.textContent="Доступная подача при рабочем давлении, л/мин";
     const flow=document.createElement("input");flow.type="number";flow.step="any";flow.min="0.1";flow.max="1500";flow.value=state.flow||"";flow.placeholder="Если известна";label.append(flow);d.append(label);
     const apply=document.createElement("button");apply.textContent="Пересчитать зоны";apply.onclick=()=>{
       if(flow.value && (!flow.checkValidity() || Number(flow.value)<=0)){tell("Проверьте значение подачи, л/мин.");return;}
-      state.flow=flow.value?Number(flow.value):null;generate();designControls();paint();
+      state.flow=flow.value?Number(flow.value):null;
+      stopPlayback();state.activeZone=null;
+      for(const layout of state.variants || [state.design])groupZones(layout,state.flow);
+      designControls();
     };d.append(apply);
     const summary=document.createElement("p");summary.textContent=result.zones.length?"Предварительных зон: "+result.zones.length+".":"Разделение на зоны ожидает данных об источнике.";d.append(summary);
     if(result.zones.length){const play=document.createElement("button");play.textContent=playback?"Остановить показ":"Показать зоны по очереди";play.onclick=()=>{

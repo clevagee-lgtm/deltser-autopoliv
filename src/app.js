@@ -1,7 +1,7 @@
 const $=id=>document.getElementById(id);
 const canvas=$("plan"), ctx=canvas.getContext("2d"), catalog=readCatalog(CSV);
 const state={image:null,map:null,layer:true,scale:null,points:[],measuring:false,selection:null,
-  name:"",mode:"",design:null,flow:null,activeZone:null,loadId:0,server:false};
+  name:"",mode:"",design:null,variants:null,flow:null,activeZone:null,loadId:0,server:false};
 let overlayCanvas=null;
 let editMode=null, vertices=[], draftMask=null, draftLayer=null, pickPixels=null;
 const undoMaps=[];
@@ -35,7 +35,7 @@ function previewMask(mask){
 }
 function tell(message){$("status").textContent=message;}
 function clearDesign(){
-  state.design=null;state.activeZone=null;
+  state.design=null;state.variants=null;state.activeZone=null;
   if(typeof stopPlayback==="function") stopPlayback();
   $("report").replaceChildren();
 }
