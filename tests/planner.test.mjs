@@ -11,7 +11,7 @@ test('geometric draft respects supply and nozzle table',()=>{
  assert.ok(d.heads.length>2 && d.zones.length>1);
  assert.ok(d.zones.every(z=>z.flow<=8));
  assert.ok(d.coverage>75);
- assert.ok(d.heads.every(h=>table.some(r=>r.model===h.model&&r.arc===h.arc&&r.flow===h.flow&&r.radius===h.radius&&r.bar===2.8)));
+ assert.ok(d.heads.every(h=>table.some(r=>r.model===h.model&&r.arc===h.arc&&r.flow===h.flow&&r.radius===h.radius&&r.bar===h.bar)));
 });
 test('water and missing scale do not produce heads',()=>{
  assert.equal(c.proposeHeads(map(3),table,.22,.22,8).heads.length,0);
@@ -19,4 +19,52 @@ test('water and missing scale do not produce heads',()=>{
 });
 test('unknown and inadequate supply never become valid zones',()=>{
  for(const flow of [null,.1])assert.equal(c.proposeHeads(map(),table,.22,.22,flow).zones.length,0);
+});
+test('places catalogue nozzles inside a diagonal oval lawn',()=>{
+  const width=40, ids=new Int32Array(width*width).fill(-1);
+  const region={id:0,kind:1,count:0,minX:width,minY:width,maxX:0,maxY:0};
+  for(let y=0;y<width;y++)for(let x=0;x<width;x++){
+    const major=(x+y-40)/(Math.SQRT2*16),minor=(x-y)/(Math.SQRT2*8);
+    if(major**2+minor**2>1)continue;
+    ids[y*width+x]=0;region.count++;
+    region.minX=Math.min(region.minX,x);region.maxX=Math.max(region.maxX,x);
+    region.minY=Math.min(region.minY,y);region.maxY=Math.max(region.maxY,y);
+  }
+  const draft=c.proposeHeads({width,height:width,ids,regions:[region]},table,.24,.24,null);
+  assert.ok(draft.heads.length>0 && draft.coverage>0);
+  assert.ok(draft.heads.every(h=>ids[Math.floor(h.y)*width+Math.floor(h.x)]===0));
+});
+test('all isolated and narrow patches are reached by real sectors',()=>{
+  const width=74,height=42,ids=new Int32Array(width*height).fill(-1),regions=[];
+  function patch(left,top,right,bottom){
+    const id=regions.length,count=(right-left+1)*(bottom-top+1);
+    regions.push({id,kind:1,minX:left,minY:top,maxX:right,maxY:bottom,count});
+    for(let y=top;y<=bottom;y++)for(let x=left;x<=right;x++)ids[y*width+x]=id;
+  }
+  patch(4,4,16,7);patch(38,12,38,12);patch(46,20,65,33);
+  const sx=.23,sy=.19;
+  const draft=c.proposeHeads({width,height,ids,regions},table,sx,sy,8);
+  let hit=0,spill=0;
+  for(let i=0;i<ids.length;i++){
+    const covered=draft.heads.some(h=>{
+      const dx=(i%width+.5-h.x)*sx,dy=(Math.floor(i/width)+.5-h.y)*sy;
+      const angle=(Math.atan2(dy,dx)*180/Math.PI-h.start+720)%360;
+      return Math.hypot(dx,dy)<=h.radius+1e-9 && ((!dx&&!dy)||angle<h.arc+1e-8||angle>360-1e-8);
+    });
+    if(covered){if(ids[i]>=0)hit++;else spill++;}
+  }
+  assert.equal(hit,ids.filter(id=>id>=0).length);
+  assert.equal(draft.coverage,100);assert.equal(draft.hit,hit);
+  assert.ok(Math.abs(draft.outsideM2-spill*sx*sy)<1e-6);
+  assert.ok(draft.heads.every(h=>ids[Math.floor(h.y)*width+Math.floor(h.x)]>=0));
+  for(const zone of draft.zones){
+    const families=new Set(draft.heads.filter(h=>h.zone===zone.id).map(c.zoneFamily));
+    assert.equal(families.size,1);assert.ok(zone.flow<=8);
+  }
+});
+test('coverage reflects unserved cells if the design reaches its capacity',()=>{
+  const width=651,height=1,ids=new Int32Array(width);
+  const regions=[{id:0,kind:1,count:width,minX:0,maxX:width-1,minY:0,maxY:0}];
+  const d=c.proposeHeads({width,height,ids,regions},table,20,20);
+  assert.ok(d.hit<d.total && d.coverage<100 && d.warnings.length);
 });

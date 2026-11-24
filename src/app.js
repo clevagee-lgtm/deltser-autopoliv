@@ -15,6 +15,12 @@ function paint(){
   ctx.drawImage(state.image,0,0,canvas.width,canvas.height);
   if(state.layer && overlayCanvas){ctx.save();ctx.globalAlpha=0.53;ctx.imageSmoothingEnabled=false;ctx.drawImage(overlayCanvas,0,0,canvas.width,canvas.height);ctx.restore();}
   if(state.layer && state.design && typeof paintHeads==="function")paintHeads();
+  let result;
+  if(!state.layer) result="Исходное изображение. Для просмотра эскиза нажмите «Разметка».";
+  else if(!state.scale) result="Разметка участка готова. Укажите масштаб для расстановки сопел.";
+  else if(state.design?.heads.length) result="Сопел на плане: "+state.design.heads.length+". Покрытие выделенного газона: "+state.design.coverage+"%. Полив за границей газона в кадре: "+Math.round(state.design.outsideM2)+" м². Синие точки с белой обводкой — сопла. Цветные секторы показывают полив.";
+  else result="Сопел на плане: 0. Проверьте масштаб и границы газона в разделе «Исправить область».";
+  $("planResult").textContent=result;
   const factor=Math.max(canvas.width,canvas.height)/650;
   ctx.lineWidth=Math.max(2,2*factor);ctx.strokeStyle="#a64124";ctx.fillStyle="#fff";
   if(state.points.length===2){ctx.beginPath();ctx.moveTo(...state.points[0]);ctx.lineTo(...state.points[1]);ctx.stroke();}
@@ -145,8 +151,8 @@ $("setMeters").onclick=()=>{
   if(!a || !b || !(meters>0 && meters<=2000)){tell("Введите длину отрезка в метрах от 0 до 2000.");return;}
   const px=Math.hypot(a[0]-b[0],a[1]-b[1]);if(px<3){tell("Отметьте более длинный отрезок.");return;}
   state.scale=meters/px;state.scaleEvidence=meters+" м по отмеченному вами отрезку.";state.measuring=false;$("meterBox").hidden=true;
-  clearDesign();refresh();tell("Масштаб применён.");
+  state.layer=true;clearDesign();refresh();tell("Масштаб применён.");
 };
-$("grid").onclick=()=>{if(!state.grid)return;state.scale=1/state.grid;state.scaleEvidence="1 метр на клетку, подтверждено вами.";state.measuring=false;state.points=[];$("meterBox").hidden=true;clearDesign();refresh();tell("Масштаб применён по сетке.");};
+$("grid").onclick=()=>{if(!state.grid)return;state.scale=1/state.grid;state.scaleEvidence="1 метр на клетку, подтверждено вами.";state.measuring=false;state.points=[];$("meterBox").hidden=true;state.layer=true;clearDesign();refresh();tell("Масштаб применён по сетке.");};
 demonstration();
 initializeInputs();

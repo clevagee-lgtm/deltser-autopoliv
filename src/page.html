@@ -1,11 +1,11 @@
 <!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Deltser — проект автополива</title><style>/*STYLE*/</style>
 <header><b>DELTSER<span> / </span></b> Мастерская автополива</header>
-<main><section class="intro"><div><h1>Автополив по плану участка</h1><p>Загрузите план. Цветные области появятся поверх исходного изображения.</p></div>
+<main><section class="intro"><div><h1>Автополив по плану участка</h1><p>Загрузите план. Укажите масштаб, чтобы увидеть сопла и секторы полива.</p></div>
 <div class="upload"><button class="primary" id="browse">Загрузить план</button><input type="file" id="file" accept="image/jpeg,image/png,image/webp"><small id="formats">JPG, PNG, WebP · до 16 МБ</small></div></section>
 <p id="status" role="status">Можно начать с примера или перетащить файл на страницу.</p>
 <div class="layout"><section class="board"><div class="toolbar"><div><button id="original">Оригинал</button><button id="overlay" aria-pressed="true">Разметка</button></div><button id="demo">Пример участка</button></div>
-<div class="paper"><canvas id="plan" aria-label="Интерактивный план участка"></canvas></div><div id="caption"></div></section>
+<p id="planResult" aria-live="polite"></p><div class="paper"><canvas id="plan" aria-label="Интерактивный план участка"></canvas></div><div id="caption"></div></section>
 <aside><h2>Участок</h2><div id="summary"></div><p class="note" id="method"></p>
 <details id="corrections"><summary>Исправить область</summary><p>Выберите область здесь или нажмите на неё на плане.</p><select aria-label="Область" id="region"></select><select aria-label="Тип области" id="kind"></select><button id="change">Применить</button></details>
 <h2>Масштаб</h2><p id="scaleInfo"></p><button id="grid" hidden>В сетке 1 клетка = 1 м</button> <button id="measure">Указать по двум точкам</button>
