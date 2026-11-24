@@ -19,7 +19,48 @@ function visitSector(head,map,scaleX,scaleY,visit){
     }
   }
 }
-function completeCoverage(map,table,scaleX,scaleY,heads){
+// Summed-area mask for protected cell centres. Subdivide only rectangles
+// which contain protected cells and which the sector may intersect.
+function sprayPermission(map,scaleX,scaleY,allowPaths){
+  const blocked=map.regions.map(r=>r.kind===3 || r.kind===4 || (r.kind===6 && !allowPaths));
+  if(!blocked.some(Boolean))return ()=>true;
+  const stride=map.width+1, prefix=new Uint32Array(stride*(map.height+1));
+  for(let y=0;y<map.height;y++){
+    let count=0;
+    for(let x=0;x<map.width;x++){
+      if(blocked[map.ids[y*map.width+x]])count++;
+      prefix[(y+1)*stride+x+1]=prefix[y*stride+x+1]+count;
+    }
+  }
+  return function permitted(h){
+    const rx=h.radius/scaleX,ry=h.radius/scaleY;
+    const left=Math.max(0,Math.ceil(h.x-rx-.5)),right=Math.min(map.width-1,Math.floor(h.x+rx-.5));
+    const top=Math.max(0,Math.ceil(h.y-ry-.5)),bottom=Math.min(map.height-1,Math.floor(h.y+ry-.5));
+    const a=h.start*Math.PI/180,b=(h.start+h.arc)*Math.PI/180;
+    const ax=Math.cos(a),ay=Math.sin(a),bx=Math.cos(b),by=Math.sin(b);
+    function touches(x0,y0,x1,y1){
+      if(x0>x1 || y0>y1 || prefix[(y1+1)*stride+x1+1]-prefix[y0*stride+x1+1]
+        -prefix[(y1+1)*stride+x0]+prefix[y0*stride+x0]===0)return false;
+      const l=(x0+.5-h.x)*scaleX,r=(x1+.5-h.x)*scaleX;
+      const t=(y0+.5-h.y)*scaleY,d=(y1+.5-h.y)*scaleY;
+      if(Math.max(l,-r,0)**2+Math.max(t,-d,0)**2>h.radius**2+1e-9)return false;
+      if(h.arc!==360){
+        const after=Math.max(ax*t,ax*d)-Math.min(ay*l,ay*r)>=-1e-9;
+        const before=Math.max(by*l,by*r)-Math.min(bx*t,bx*d)>=-1e-9;
+        if(h.arc<=180 ? !(after && before) : !(after || before))return false;
+      }
+      if(x0===x1 && y0===y1)return true;
+      if(x1-x0>y1-y0){
+        const mid=(x0+x1)>>1;
+        return touches(x0,y0,mid,y1) || touches(mid+1,y0,x1,y1);
+      }
+      const mid=(y0+y1)>>1;
+      return touches(x0,y0,x1,mid) || touches(x0,mid+1,x1,y1);
+    }
+    return !touches(left,top,right,bottom);
+  };
+}
+function completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted){
   const turf=Uint8Array.from(map.ids,id=>Number(map.regions[id]?.kind===1));
   const wet=new Uint16Array(turf.length);
   const mark=(head,delta)=>visitSector(head,map,scaleX,scaleY,i=>{wet[i]+=delta;});
@@ -64,7 +105,7 @@ function completeCoverage(map,table,scaleX,scaleY,heads){
           if(turf[j]){if(!wet[j])added++;}
           else {
             const kind=map.regions[map.ids[j]]?.kind;
-            const weight=kind===4 || kind===3 ? 5 : kind===2 ? .65 : 1.5;
+            const weight=kind===6 && allowPaths ? 0 : kind===4 || kind===3 ? 5 : kind===2 ? .65 : 1.5;
             off+=weight*(wet[j] ? .25 : 1);
           }
         }
@@ -87,8 +128,8 @@ function completeCoverage(map,table,scaleX,scaleY,heads){
         if(waste>Math.max(1.5,area*.12))continue;
         const score=(extra+.02)/(1+.12*waste+.055*area);
         if(score>bestScore){
-          bestScore=score;
-          best={...nozzle,x:x+.5,y:y+.5,rPx:nozzle.radius/scaleX,start:start*360/rays,region:map.ids[y*map.width+x],score};
+          const trial={...nozzle,x:x+.5,y:y+.5,rPx:nozzle.radius/scaleX,start:start*360/rays,region:map.ids[y*map.width+x],score};
+          if(permitted(trial)){best=trial;bestScore=score;}
         }
       }
     }
@@ -158,6 +199,7 @@ function completeCoverage(map,table,scaleX,scaleY,heads){
       for(let k=0;k<(nozzle.arc===360?1:rays);k++){
         if(bounds[k]>nozzle.arc+1e-9)continue;
         const trial={...head,...nozzle,start:k*360/rays,rPx:nozzle.radius/scaleX};
+        if(!permitted(trial))continue;
         let off=0;
         visitSector(trial,map,scaleX,scaleY,i=>{if(!wet[i] && !turf[i])off++;});
         if(off<=spill && (off<spill || area<bestArea)){best=trial;bestArea=area;spill=off;}
@@ -165,18 +207,20 @@ function completeCoverage(map,table,scaleX,scaleY,heads){
     }
     heads[index]=best;mark(best,1);
   }
-  let total=0,hit=0,outside=0;
+  let total=0,hit=0,outside=0,pathCells=0;
   for(let i=0;i<turf.length;i++){
     total+=turf[i];
-    if(wet[i]){if(turf[i])hit++;else outside++;}
+    if(wet[i]){if(turf[i])hit++;else {outside++;if(map.regions[map.ids[i]]?.kind===6)pathCells++;}}
   }
-  return {total,hit,coverage:total?Math.floor(1000*hit/total)/10:null,outsideM2:outside*scaleX*scaleY};
+  return {total,hit,coverage:total?Math.floor(1000*hit/total)/10:null,pathM2:pathCells*scaleX*scaleY,outsideM2:outside*scaleX*scaleY};
 }
-function proposeHeads(map,table,scaleX,scaleY,flowLimit) {
+function proposeHeads(map,table,scaleX,scaleY,flowLimit,allowPaths=false) {
   const heads=[],warnings=[],zones=[];
   if(!(scaleX>0 && scaleY>0))return {heads,warnings:["Укажите масштаб."],zones};
   const inZone=(x,y,id)=>x>=0&&y>=0&&x<map.width&&y<map.height&&map.ids[Math.floor(y)*map.width+Math.floor(x)]===id;
 
+  allowPaths=allowPaths && map.regions.some(r=>r.kind===6);
+  const permitted=sprayPermission(map,scaleX,scaleY,allowPaths);
   for(const reg of map.regions.filter(r=>r.kind===1)){
     const width=(reg.maxX-reg.minX+1)*scaleX,height=(reg.maxY-reg.minY+1)*scaleY;
     const area=reg.count*scaleX*scaleY;
@@ -220,7 +264,14 @@ function proposeHeads(map,table,scaleX,scaleY,flowLimit) {
         for(const nozzle of candidates){
           const rays=Array.from({length:32},(_,i)=>{
             const a=(i+.5)*Math.PI/16;
-            return [.2,.5,.8,1].reduce((s,d)=>s+Number(inZone(x+Math.cos(a)*nozzle.radius*d/scaleX,y+Math.sin(a)*nozzle.radius*d/scaleY,reg.id)),0)/4;
+            return [.2,.5,.8,1].reduce((sum,distance)=>{
+              const px=x+Math.cos(a)*nozzle.radius*distance/scaleX;
+              const py=y+Math.sin(a)*nozzle.radius*distance/scaleY;
+              if(inZone(px,py,reg.id))return sum+1;
+              if(!allowPaths || px<0 || py<0 || px>=map.width || py>=map.height)return sum;
+              const kind=map.regions[map.ids[Math.floor(py)*map.width+Math.floor(px)]]?.kind;
+              return sum+Number(kind===1 || kind===6);
+            },0)/4;
           });
           for(let offset=0;offset<(nozzle.arc===360?1:32);offset++){
             const n=nozzle.arc/360*32;
@@ -228,7 +279,10 @@ function proposeHeads(map,table,scaleX,scaleY,flowLimit) {
             for(let j=0;j<n;j++)inside+=rays[(offset+j)%32];
             if(inside/n<.88)continue;
             const score=inside-4*(n-inside);
-            if(!best||score>best.score)best={...nozzle,x,y,rPx:nozzle.radius/scaleX,start:offset*360/32,score,region:reg.id};
+            if(!best||score>best.score){
+              const trial={...nozzle,x,y,rPx:nozzle.radius/scaleX,start:offset*360/32,score,region:reg.id};
+              if(permitted(trial))best=trial;
+            }
           }
         }
         if(best)rgHeads.push(best);
@@ -236,7 +290,7 @@ function proposeHeads(map,table,scaleX,scaleY,flowLimit) {
       return rgHeads;
     }
   }
-  const coverage=completeCoverage(map,table,scaleX,scaleY,heads);
+  const coverage=completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted);
   if(coverage.hit<coverage.total)warnings.push("Часть газона осталась без покрытия. Проверьте границы областей. Для оставшихся ячеек не удалось подобрать сектор в пределах ограничений эскиза.");
   if(flowLimit>0){
     // Preserve spatial order. A zone never exceeds the entered working capacity.
@@ -262,7 +316,7 @@ function generate(){
   clearDesign();
   if(!state.scale)return;
   const m=state.map;
-  state.design=proposeHeads(m,catalog,state.scale*canvas.width/m.width,state.scale*canvas.height/m.height,state.flow);
+  state.design=proposeHeads(m,catalog,state.scale*canvas.width/m.width,state.scale*canvas.height/m.height,state.flow,$("waterPaths").checked);
 }
 function paintHeads(){
   const m=state.map;
@@ -322,6 +376,6 @@ function designControls(){
     report.append(tbl);
   }
   for(const s of result.warnings){const p=document.createElement("p");p.className="note";p.textContent=s;d.append(p);}
-  if(n){const p=document.createElement("p");p.className="note";p.textContent="Геометрическая площадь за газоном внутри изображения: "+Math.round(result.outsideM2)+" м². Покрытие показывает, какая доля распознанного газона попала хотя бы под один сектор. Равномерность полива требует отдельной проверки.";d.append(p);}
+  if(n){const p=document.createElement("p");p.className="note";p.textContent="Геометрическая площадь за газоном внутри изображения: "+result.outsideM2.toLocaleString("ru",{maximumFractionDigits:2})+" м², из них на отмеченных дорожках — "+result.pathM2.toLocaleString("ru",{maximumFractionDigits:2})+" м². Покрытие показывает, какая доля распознанного газона попала хотя бы под один сектор. Равномерность полива требует отдельной проверки.";d.append(p);}
   paint();
 }

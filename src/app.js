@@ -97,6 +97,7 @@ function refresh(){
   }
   if(!$("summary").childElementCount)$("summary").textContent="Подходящие области не выделены.";
   $("caption").textContent=state.name+" · "+state.mode;
+  $("pathHint").textContent=m.regions.some(r=>r.kind===6) ? "При включении струя может попадать на отмеченные дорожки." : "Чтобы учесть дорожку, отметьте её в разделе «Разметить контур»." ;
   $("scaleInfo").textContent=state.scale?state.scaleEvidence:"Нужен один известный размер для расчёта в метрах.";
   $("region").replaceChildren(...m.regions.map(r=>new Option("№ "+(r.id+1)+" · "+names[r.kind],r.id)));
   $("corrections").hidden=!m.regions.length;
@@ -109,6 +110,7 @@ function refresh(){
   if(typeof designControls==="function")designControls();
 }
 function loadImage(image,name,meta={}){
+  $("waterPaths").checked=false;
   clearDesign();resetEdit();undoMaps.length=0;$("undoArea").disabled=true;
   const factor=Math.min(1,1600/Math.max(image.width,image.height));
   canvas.width=Math.max(1,Math.round(image.width*factor));canvas.height=Math.max(1,Math.round(image.height*factor));
@@ -117,6 +119,10 @@ function loadImage(image,name,meta={}){
   const sc=sample.getContext("2d");sc.fillStyle="white";sc.fillRect(0,0,sample.width,sample.height);sc.drawImage(image,0,0,sample.width,sample.height);
   pickPixels=null;
   const map=detectRegions(sc.getImageData(0,0,sample.width,sample.height).data,sample.width,sample.height);
+  if(meta.path){
+    const mask=polygonMask(meta.path.map(([x,y])=>[x*map.width/image.width,y*map.height/image.height]),map.width,map.height);
+    Object.assign(map,editRegionMap(map,mask,6));
+  }
   if(meta.words) useTextLabels(map,meta.words);
   if(meta.polygons && typeof applyPolygons==="function")applyPolygons(map,meta.polygons);
   Object.assign(state,{image,name,map,mode:meta.mode||"Локальный анализ",scale:meta.scale??null,scaleEvidence:meta.scaleEvidence||"",
@@ -147,7 +153,7 @@ function demonstration(){
   c.fillStyle="#243f35";c.font="600 16px sans-serif";c.fillText("ДОМ",513,161);c.fillText("ПРУД",696,161);
   c.fillText("38 м",413,45);c.strokeStyle="#435c4b";c.lineWidth=2;c.strokeRect(50,50,760,400);
   c.fillText("◀",46,45);c.fillText("▶",794,45);
-  loadImage(sheet,"Учебный участок",{scale:0.05,scaleEvidence:"38 м по внешней границе учебного участка.",mode:"Демонстрационный план",method:"Заливка рассчитана по изображению. Известный размер учебной схемы — 38 м."});
+  loadImage(sheet,"Учебный участок",{path:[[69,244],[407,244],[407,265],[69,265]],scale:0.05,scaleEvidence:"38 м по внешней границе учебного участка.",mode:"Демонстрационный план",method:"Между двумя газонами отмечена дорожка. Переключите «Поливать дорожки», чтобы сравнить расстановку."});
   tell("Открыт учебный пример. Загрузите свой план для независимой проверки.");
 }
 async function decodeImage(blob){const url=URL.createObjectURL(blob);try{const img=new Image();img.src=url;await img.decode();return img;}finally{URL.revokeObjectURL(url);}}
@@ -172,6 +178,10 @@ $("browse").onclick=()=>$("file").click();
 $("file").onchange=e=>{upload(e.target.files[0]);e.target.value="";};
 document.addEventListener("dragover",e=>e.preventDefault());
 document.addEventListener("drop",e=>{e.preventDefault();upload(e.dataTransfer.files[0]);});
+$("waterPaths").onchange=()=>{
+  clearDesign();state.layer=true;refresh();
+  tell(state.scale?"Эскиз пересчитан.":"Настройка дорожек сохранена для расчёта после задания масштаба.");
+};
 $("demo").onclick=demonstration;
 $("original").onclick=()=>{resetEdit();state.layer=false;paint();};$("overlay").onclick=()=>{state.layer=true;paint();};
 $("region").onchange=()=>{state.selection=Number($("region").value);refresh();};

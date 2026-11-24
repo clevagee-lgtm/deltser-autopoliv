@@ -32,7 +32,8 @@ function applyPolygons(map,polygons){
   const c=document.createElement("canvas");c.width=map.width;c.height=map.height;
   const p=c.getContext("2d",{willReadFrequently:true});const regionKinds=[];
   // Exclusions win any overlap with irrigation polygons.
-  const ordered=[...polygons].sort((a,b)=>Number(["water","excluded"].includes(a.kind))-Number(["water","excluded"].includes(b.kind)));
+  const priority=kind=>["water","excluded"].includes(kind)?2:Number(kind==="path");
+  const ordered=[...polygons].sort((a,b)=>priority(a.kind)-priority(b.kind));
   for(const region of ordered){
     const kind=kinds.indexOf(region.kind);
     if(kind<0 || region.points.length<3)continue;
