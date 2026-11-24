@@ -106,3 +106,25 @@ test('path permission changes the layout while protecting buildings and water',(
   assert.equal(allowed.coverage,100);
   assert.notDeepEqual(strict.heads,allowed.heads);
 });
+test('incoming reach uses the emitting radius, heading and metric scale',()=>{
+  const h=(x,y,radius,start,arc,region=0)=>({x,y,radius,start,arc,region});
+  const a=h(1,1,4,315,90),b=h(3,1,1,0,90),c1=h(1,4,3,90,60),strip=h(8,8,1,0,180,1);
+  const plan={regions:[{kind:1},{kind:7}]};
+  const result=c.checkHeadSpacing([a,b,c1,strip],plan,2,1);
+  assert.deepEqual([result.reached,result.missing,result.exempt],[1,1,2]);
+  assert.equal(result.checks[1].source,0);
+  assert.equal(c.reachesHead(a,h(2,3,1,0,90),2,1),true);
+  assert.equal(c.reachesHead(a,h(2,3.01,1,0,90),2,1),false);
+  assert.equal(c.reachesHead(a,{...a},2,1),false);
+  assert.equal(c.reachesHead(h(0,0,3,90,270),h(1,1,1,0,360),1,1),false);
+});
+test('explicitly marked narrow strips remain in the lawn coverage denominator',()=>{
+  const plan=map(7),draft=c.proposeHeads(plan,table,.22,.22,null);
+  assert.equal(draft.total,4800);
+  assert.equal(draft.hit,4800);
+  assert.equal(draft.spacing.missing,0);
+  assert.ok(draft.heads.length);
+  const empty=c.proposeHeads(plan,[],.22,.22,null);
+  assert.equal(empty.dryCells.length,4800);
+  assert.equal(empty.dryM2,4800*.22*.22);
+});

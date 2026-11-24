@@ -1,7 +1,7 @@
 // The label map retains connected regions so that corrections update one area.
-const kinds = ["unknown","lawn","planting","water","excluded","drip","path"];
-const names = ["Без разметки","Возможный газон","Посадки","Водоём","Исключено","Капельный полив","Дорожка"];
-const palette = ["","#4eae68","#c78c41","#348bc0","#687984","#00a8ad","#a68abb"];
+const kinds = ["unknown","lawn","planting","water","excluded","drip","path","narrowLawn"];
+const names = ["Без разметки","Возможный газон","Посадки","Водоём","Исключено","Капельный полив","Дорожка","Газон · узкая полоса"];
+const palette = ["","#4eae68","#c78c41","#348bc0","#687984","#00a8ad","#a68abb","#75bf56"];
 
 function detectRegions(pixels, width, height) {
   const count = width*height;

@@ -19,6 +19,35 @@ function visitSector(head,map,scaleX,scaleY,visit){
     }
   }
 }
+function isTurf(kind){
+  return kind===1 || kind===7;
+}
+function reachesHead(source,target,scaleX,scaleY){
+  const dx=(target.x-source.x)*scaleX,dy=(target.y-source.y)*scaleY;
+  const distance=Math.hypot(dx,dy);
+  if(distance<1e-9 || distance>source.radius+1e-9)return false;
+  if(source.arc===360)return true;
+  const angle=(Math.atan2(dy,dx)*180/Math.PI-source.start+720)%360;
+  return angle<=source.arc+1e-8 || angle>=360-1e-8;
+}
+function spacingException(head,map){
+  if(map.regions[head.region]?.kind===7)return "Узкая полоса";
+  if(head.arc>=30 && head.arc<=60)return "Угловой сектор 30–60°";
+  return null;
+}
+function checkHeadSpacing(heads,map,scaleX,scaleY){
+  let reached=0,exempt=0,missing=0;
+  const checks=heads.map(target=>{
+    // Keep a witness from a different location for the drawing and the CSV.
+    const source=heads.findIndex(h=>reachesHead(h,target,scaleX,scaleY));
+    const exception=source<0 ? spacingException(target,map) : null;
+    if(source>=0)reached++;
+    else if(exception)exempt++;
+    else missing++;
+    return {source,exception};
+  });
+  return {checks,reached,exempt,missing};
+}
 // Summed-area mask for protected cell centres. Subdivide only rectangles
 // which contain protected cells and which the sector may intersect.
 function sprayPermission(map,scaleX,scaleY,allowPaths){
@@ -61,7 +90,7 @@ function sprayPermission(map,scaleX,scaleY,allowPaths){
   };
 }
 function completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted){
-  const turf=Uint8Array.from(map.ids,id=>Number(map.regions[id]?.kind===1));
+  const turf=Uint8Array.from(map.ids,id=>Number(isTurf(map.regions[id]?.kind)));
   const wet=new Uint16Array(turf.length);
   const mark=(head,delta)=>visitSector(head,map,scaleX,scaleY,i=>{wet[i]+=delta;});
   const occupied=new Set();
@@ -208,11 +237,13 @@ function completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted){
     heads[index]=best;mark(best,1);
   }
   let total=0,hit=0,outside=0,pathCells=0;
+  const dryCells=[];
   for(let i=0;i<turf.length;i++){
     total+=turf[i];
+    if(turf[i] && !wet[i])dryCells.push(i);
     if(wet[i]){if(turf[i])hit++;else {outside++;if(map.regions[map.ids[i]]?.kind===6)pathCells++;}}
   }
-  return {total,hit,coverage:total?Math.floor(1000*hit/total)/10:null,pathM2:pathCells*scaleX*scaleY,outsideM2:outside*scaleX*scaleY};
+  return {total,hit,dryCells,dryM2:dryCells.length*scaleX*scaleY,coverage:total?Math.floor(1000*hit/total)/10:null,pathM2:pathCells*scaleX*scaleY,outsideM2:outside*scaleX*scaleY};
 }
 function proposeHeads(map,table,scaleX,scaleY,flowLimit,allowPaths=false) {
   const heads=[],warnings=[],zones=[];
@@ -221,7 +252,7 @@ function proposeHeads(map,table,scaleX,scaleY,flowLimit,allowPaths=false) {
 
   allowPaths=allowPaths && map.regions.some(r=>r.kind===6);
   const permitted=sprayPermission(map,scaleX,scaleY,allowPaths);
-  for(const reg of map.regions.filter(r=>r.kind===1)){
+  for(const reg of map.regions.filter(r=>isTurf(r.kind))){
     const width=(reg.maxX-reg.minX+1)*scaleX,height=(reg.maxY-reg.minY+1)*scaleY;
     const area=reg.count*scaleX*scaleY;
     if(heads.length>=650){warnings.push("Достигнут предел числа сопел в эскизе.");break;}
@@ -270,7 +301,7 @@ function proposeHeads(map,table,scaleX,scaleY,flowLimit,allowPaths=false) {
               if(inZone(px,py,reg.id))return sum+1;
               if(!allowPaths || px<0 || py<0 || px>=map.width || py>=map.height)return sum;
               const kind=map.regions[map.ids[Math.floor(py)*map.width+Math.floor(px)]]?.kind;
-              return sum+Number(kind===1 || kind===6);
+              return sum+Number(isTurf(kind) || kind===6);
             },0)/4;
           });
           for(let offset=0;offset<(nozzle.arc===360?1:32);offset++){
@@ -304,7 +335,8 @@ function proposeHeads(map,table,scaleX,scaleY,flowLimit,allowPaths=false) {
     }
     if(heads.some(h=>!h.zone))warnings.push("Есть сопла, расход которых превышает доступную подачу.");
   }
-  return {heads,zones,warnings,...coverage};
+  const spacing=checkHeadSpacing(heads,map,scaleX,scaleY);
+  return {heads,zones,warnings,spacing,...coverage};
 }
 function zoneFamily(h){
   return h.model==="MP-800SR" || h.bar===2.1 ? h.model : "MP";
@@ -330,7 +362,15 @@ function paintHeads(){
   }
   // Draw markers last so overlapping sectors cannot cover a sprinkler.
   const unit=m.width/(canvas.clientWidth || canvas.width);
-  for(const h of visible){
+  ctx.fillStyle="#d72a26bb";
+  for(const index of state.design.dryCells)ctx.fillRect(index%m.width,Math.floor(index/m.width),1,1);
+  for(const [index,h] of state.design.heads.entries()){
+    if(state.activeZone && state.activeZone!==h.zone)continue;
+    const check=state.design.spacing.checks[index];
+    if(check.source<0 && !check.exception){
+      ctx.strokeStyle="#bd360d";ctx.lineWidth=2.5*unit;
+      ctx.strokeRect(h.x-6*unit,h.y-6*unit,12*unit,12*unit);
+    }
     ctx.beginPath();ctx.arc(h.x,h.y,4*unit,0,2*Math.PI);
     ctx.fillStyle="#104571";ctx.fill();ctx.strokeStyle="#fff";ctx.lineWidth=1.7*unit;ctx.stroke();
   }
@@ -340,9 +380,12 @@ function downloadFile(name,type,text){
  const url=URL.createObjectURL(new Blob([text],{type}));const link=document.createElement("a");link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),3000);
 }
 function headCSV(){
- const lines=["Номер;Модель;Сектор, град;Начало по часовой от правой оси, град;Радиус, м;Расход, л/мин;Условная зона;X от левого края, м;Y от верхнего края, м"];
+ const lines=["Номер;Модель;Сектор, град;Начало по часовой от правой оси, град;Радиус, м;Расход, л/мин;Условная зона;X от левого края, м;Y от верхнего края, м;Номер сопла, доливающего до этого;Исключение или замечание"];
  const m=state.map;
- state.design.heads.forEach((h,i)=>lines.push([i+1,h.model,h.arc,h.start,h.radius,h.flow,h.zone||"",+(h.x*canvas.width/m.width*state.scale).toFixed(2),+(h.y*canvas.height/m.height*state.scale).toFixed(2)].join(";")));
+ state.design.heads.forEach((h,i)=>{
+   const check=state.design.spacing.checks[i];
+   lines.push([i+1,h.model,h.arc,h.start,h.radius,h.flow,h.zone||"",+(h.x*canvas.width/m.width*state.scale).toFixed(2),+(h.y*canvas.height/m.height*state.scale).toFixed(2),check.source<0?"":check.source+1,check.exception||(check.source<0?"Нет долива":"")].join(";"));
+ });
  downloadFile("Deltser-sopla.csv","text/csv;charset=utf-8","\uFEFF"+lines.join("\r\n"));
 }
 function designControls(){
@@ -353,6 +396,15 @@ function designControls(){
   if(!state.design)generate();
   const result=state.design,n=result.heads.length;
   const info=document.createElement("p");info.textContent=n?("Сопел: "+n+" · покрытие выделенного газона: "+result.coverage+"%."):"Для выделенных областей подходящая расстановка пока не найдена.";d.append(info);
+  if(result.total){
+    const audit=document.createElement("p");
+    const {reached,exempt,missing}=result.spacing;
+    audit.textContent="Соседний дождеватель доливает до "+reached+" из "+n+" сопел.";
+    if(exempt)audit.textContent+=" Допустимых исключений без долива — "+exempt+".";
+    if(missing)audit.textContent+=" Без долива — "+missing+" (красные квадраты).";
+    if(result.dryCells.length)audit.textContent+=" Красным на газоне показана сухая площадь — "+result.dryM2.toLocaleString("ru",{maximumSignificantDigits:3})+" м².";
+    d.append(audit);
+  }
   if(n){
     const label=document.createElement("label");label.textContent="Доступная подача при рабочем давлении, л/мин";
     const flow=document.createElement("input");flow.type="number";flow.step="any";flow.min="0.1";flow.max="1500";flow.value=state.flow||"";flow.placeholder="Если известна";label.append(flow);d.append(label);
