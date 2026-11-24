@@ -47,7 +47,7 @@ process.stdout.write(Buffer.from(Uint8Array.from(map.ids,id=>map.regions[id]?.ki
     if len(wet)!=len(result.stdout): raise ValueError('Unmatched grid sizes')
     for value, predicted in zip(wet,result.stdout):
         if value<128: counts[predicted]+=1
-    return dict(wet=sum(counts),lawn=counts[1],planting=counts[2],other=sum(counts)-sum(counts[1:3]))
+    return dict(wet=sum(counts),lawn=counts[1],outside_lawn=result.stdout.count(1)-counts[1],planting=counts[2],other=sum(counts)-sum(counts[1:3]))
 
 
 if __name__=='__main__':

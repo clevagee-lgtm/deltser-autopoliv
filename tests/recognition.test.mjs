@@ -19,3 +19,13 @@ test('isolated pond and lawn with empty path',()=>{
 test('a local text label can override a colour hypothesis',()=>{
  const m=sample();c.useTextLabels(m,[{text:'Цветник',x:.25,y:.4}]);assert.equal(m.regions[0].kind,2);
 });
+test('distinguishes a local pastel fill from tinted paper',()=>{
+  const w=100,h=80,p=new Uint8ClampedArray(w*h*4).fill(255);
+  const tint=[215,235,210,255];
+  for(let y=15;y<65;y++)for(let x=12;x<90;x++)
+    p.set(x<48?tint:[212,212,212,255],4*(y*w+x));
+  let m=c.detectRegions(p,w,h);
+  assert.equal(m.regions[m.ids[35*w+28]].kind,1);
+  for(let i=0;i<p.length;i+=4)p.set(tint,i);
+  m=c.detectRegions(p,w,h);assert.equal(m.regions.length,0);
+});

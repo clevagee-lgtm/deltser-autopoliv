@@ -19,10 +19,28 @@ function detectRegions(pixels, width, height) {
   const paper=common && common[1]>count*.055 ? [
     (common[0]>>12)*4+1,(common[0]>>6&63)*4+1,(common[0]&63)*4+1
   ]:null;
+  // A pale green swatch on a white, grey-paved sheet can denote lawn.
+  // Treat broad or edge-to-edge tints as paper instead.
+  let localizedTint=false;
+  if(paper){
+    let white=0,grey=0,tinted=0,edgeTint=0,edgeCount=0;
+    for(let i=0;i<count;i++){
+      const r=pixels[4*i],g=pixels[4*i+1],b=pixels[4*i+2];
+      if(Math.min(r,g,b)>249)white++;
+      if(g>155 && g<242 && Math.max(r,g,b)-Math.min(r,g,b)<5)grey++;
+      const similar=Math.max(Math.abs(r-paper[0]),Math.abs(g-paper[1]),Math.abs(b-paper[2]))<=10;
+      if(similar)tinted++;
+      const x=i%width,y=Math.floor(i/width);
+      if(x<width*.06||x>=width*.94||y<height*.06||y>=height*.94){
+        edgeCount++;if(similar)edgeTint++;
+      }
+    }
+    localizedTint=white>count*.18 && grey>count*.12 && tinted<count*.38 && edgeTint<edgeCount*.03;
+  }
   for (let i=0;i<count;i++) {
     const [r,g,b] = pixels.subarray(i*4,i*4+3);
-    if(paper && Math.max(Math.abs(r-paper[0]),Math.abs(g-paper[1]),Math.abs(b-paper[2]))<=6) continue;
-    if(paper && g>185 && r-b>6 && g-r<31 && g-b>11){raw[i]=2;continue;}
+    if(paper && Math.max(Math.abs(r-paper[0]),Math.abs(g-paper[1]),Math.abs(b-paper[2]))<=6){if(localizedTint)raw[i]=1;continue;}
+    if(paper && !localizedTint && g>185 && r-b>6 && g-r<31 && g-b>11){raw[i]=2;continue;}
     if (b-r>15 && b-g>1 && g-r>-5) raw[i]=3;
     else if (g-r>3 && g-b>12) raw[i]=(g<128 || (r/g<0.75 && g<177))?2:1;
     else if (r-b>36 && r-g>8 && g>100 && r-g<62) raw[i]=2;
