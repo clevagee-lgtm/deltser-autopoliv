@@ -128,3 +128,21 @@ test('explicitly marked narrow strips remain in the lawn coverage denominator',(
   assert.equal(empty.dryCells.length,4800);
   assert.equal(empty.dryM2,4800*.22*.22);
 });
+test('spacing repair turns an existing head while preserving wet grass and the supply link',()=>{
+  const width=11,height=5;
+  const map={width,height,ids:new Int32Array(width*height),regions:[{id:0,kind:1}]};
+  const turf=new Uint8Array(width*height).fill(1),wet=new Uint16Array(turf.length);
+  const nozzle={model:"test",radius:3,arc:90,flow:1,bar:2.8};
+  const heads=[{...nozzle,x:2.5,y:2.5,start:270,region:0},
+    {...nozzle,x:5.5,y:2.5,start:0,region:0},{...nozzle,x:8.5,y:2.5,start:180,region:0}];
+  for(const h of heads)c.visitSector(h,map,1,1,i=>{wet[i]++;});
+  const before=Uint16Array.from(wet);
+  assert.equal(c.checkHeadSpacing(heads,map,1,1).missing,1);
+  c.improveSpacing(map,[nozzle,{...nozzle,arc:180},{...nozzle,arc:360}],heads,1,1,turf,wet,false,()=>true);
+  assert.equal(c.checkHeadSpacing(heads,map,1,1).missing,0);
+  assert.equal(heads.length,3);
+  const actual=new Uint16Array(turf.length);
+  for(const h of heads)c.visitSector(h,map,1,1,i=>{actual[i]++;});
+  assert.deepEqual(wet,actual);
+  assert.ok(before.every((n,i)=>!n || wet[i]));
+});

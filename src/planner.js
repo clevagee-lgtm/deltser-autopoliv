@@ -15,9 +15,12 @@ function visitSector(head,map,scaleX,scaleY,visit){
       const dx=(x+.5-head.x)*scaleX;
       if(dx*dx+dy*dy>head.radius**2+1e-9)continue;
       const after=ax*dy-ay*dx>=-1e-9, before=dx*by-dy*bx>=-1e-9;
-      if(head.arc===360 || (head.arc<=180 ? after && before : after || before))visit(y*map.width+x);
+      if(head.arc===360 || (head.arc<=180 ? after && before : after || before)){
+        if(visit(y*map.width+x)===false)return false;
+      }
     }
   }
+  return true;
 }
 function isTurf(kind){
   return kind===1 || kind===7;
@@ -89,6 +92,103 @@ function sprayPermission(map,scaleX,scaleY,allowPaths){
     return !touches(left,top,right,bottom);
   };
 }
+// Optimise incoming coverage against the same cell mask used for the area report.
+function improveSpacing(map,options,heads,scaleX,scaleY,turf,wet,allowPaths,permitted){
+  const incoming=new Uint16Array(650);
+  const reaches=(a,b)=>reachesHead(a,b,scaleX,scaleY);
+  const walk=(h,fn)=>visitSector(h,map,scaleX,scaleY,fn);
+  function updateLinks(source,delta){
+    for(let j=0;j<heads.length;j++)if(heads[j] && reaches(source,heads[j]))incoming[j]+=delta;
+  }
+  for(const h of heads)updateLinks(h,1);
+  const optional=h=>Boolean(spacingException(h,map));
+
+  // A redundant nozzle may still be the sole source of water for a neighbour.
+  function prune(){
+    for(let i=heads.length-1;i>=0;i--){
+      const h=heads[i];
+      if(!h)continue;
+      if(heads.some((target,j)=>target && !optional(target) && incoming[j]===1 && reaches(h,target)))continue;
+      if(!walk(h,k=>!(turf[k] && wet[k]===1)))continue;
+      walk(h,k=>{wet[k]--;});updateLinks(h,-1);heads[i]=null;
+    }
+  }
+  prune();
+  const nozzles=[...options].sort((a,b)=>a.radius**2*a.arc-b.radius**2*b.arc || a.flow-b.flow);
+  const maxRadius=Math.max(0,...nozzles.map(n=>n.radius));
+  const distance=(a,b)=>Math.hypot((a.x-b.x)*scaleX,(a.y-b.y)*scaleY);
+  const existingAt=h=>heads.some(other=>other && reaches(other,h));
+  const allowedCell=k=>turf[k] || (allowPaths && map.regions[map.ids[k]]?.kind===6);
+  // Keep the union of off-lawn spray from growing during spacing repairs.
+  const fits=h=>permitted(h) && walk(h,k=>Boolean(wet[k] || allowedCell(k)));
+  function covering(origin,target,accept){
+    const d=distance(origin,target);
+    for(const nozzle of nozzles){
+      if(d<1e-9 || d>nozzle.radius+1e-9)continue;
+      for(let step=0;step<(nozzle.arc===360?1:32);step++){
+        const trial={...origin,...nozzle,start:step*360/32,rPx:nozzle.radius/scaleX};
+        if(reaches(trial,target) && accept(trial) && fits(trial))return trial;
+      }
+    }
+    return null;
+  }
+  function adjust(source,index,target){
+    const required=heads.filter((h,j)=>h && !optional(h) && incoming[j]===1 && reaches(source,h));
+    const requiredCells=[];
+    walk(source,k=>{if(turf[k] && wet[k]===1)requiredCells.push({x:k%map.width+.5,y:Math.floor(k/map.width)+.5});});
+    // The centre cell belongs to every sector, but never counts as another head.
+    const trial=covering(source,target,h=>{
+      if(!incoming[index] && optional(source) && !optional(h))return false;
+      return required.every(other=>reaches(h,other)) &&
+        requiredCells.every(p=>(p.x===h.x && p.y===h.y) || reaches(h,p));
+    });
+    if(!trial)return false;
+    updateLinks(source,-1);walk(source,k=>{wet[k]--;});
+    heads[index]=trial;updateLinks(trial,1);walk(trial,k=>{wet[k]++;});
+    return true;
+  }
+  const missing=i=>heads[i] && !incoming[i] && !optional(heads[i]);
+  const near=(target)=>heads.map((h,i)=>h?{h,i,d:distance(h,target)}:null)
+    .filter(p=>p && p.d>1e-9 && p.d<=maxRadius+1e-9).sort((a,b)=>a.d-b.d);
+  // Reuse installed positions before considering another head.
+  for(let i=0;i<heads.length;i++){
+    if(!missing(i))continue;
+    const target=heads[i];
+    for(const p of near(target).slice(0,12))if(adjust(p.h,p.i,target))break;
+  }
+  // Seek a supported position on grass. Prefer spacing near a catalogue radius.
+  for(let i=0;i<heads.length;i++){
+    if(!missing(i))continue;
+    const target=heads[i],seen=new Set();
+    let added=null;
+    for(const radius of [...new Set(nozzles.map(n=>n.radius))].sort((a,b)=>a-b)){
+      for(const fraction of [.9,.65]){
+        for(const [vx,vy] of directionVectors){
+          const x=Math.floor(target.x+vx*radius*fraction/scaleX),y=Math.floor(target.y+vy*radius*fraction/scaleY);
+          if(x<0 || x>=map.width || y<0 || y>=map.height)continue;
+          const k=y*map.width+x;
+          if(!turf[k] || seen.has(k))continue;
+          seen.add(k);
+          const pos={x:x+.5,y:y+.5,region:map.ids[k]};
+          if(!existingAt(pos) || heads.some(h=>h && distance(h,pos)<nozzles[0].radius*.5))continue;
+          added=covering(pos,target,()=>true);
+          if(added)break;
+        }
+        if(added)break;
+      }
+      if(added)break;
+    }
+    if(!added)continue;
+    let index=heads.indexOf(null);
+    if(index<0){if(heads.length>=650)break;index=heads.length;}
+    heads[index]=added;
+    incoming[index]=heads.reduce((n,h)=>n+Number(Boolean(h && reaches(h,added))),0);
+    updateLinks(added,1);walk(added,k=>{wet[k]++;});
+  }
+  prune();
+  for(let i=heads.length-1;i>=0;i--)if(!heads[i])heads.splice(i,1);
+}
+
 function completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted){
   const turf=Uint8Array.from(map.ids,id=>Number(isTurf(map.regions[id]?.kind)));
   const wet=new Uint16Array(turf.length);
@@ -180,10 +280,24 @@ function completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted){
     add(head);
   }
   const anchorOffsets=[];
-  for(const d of [.75,1.65,3.5])for(let a=0;a<8;a++){
-    anchorOffsets.push([Math.round(d*Math.cos(a*Math.PI/4)/scaleX),Math.round(d*Math.sin(a*Math.PI/4)/scaleY)]);
+  for(const d of [.75,1.15,1.65,2.9,3.9,5.5])for(let a=0;a<32;a++){
+    anchorOffsets.push([Math.round(d*Math.cos(a*Math.PI/16)/scaleX),Math.round(d*Math.sin(a*Math.PI/16)/scaleY)]);
   }
-  for(let i=0;i<turf.length && heads.length<650 && options.length;i++){
+  // Give boundary cells beside hard exclusions first choice of a legal sector.
+  const boundary=[],interior=[];
+  const blocked=k=>{
+    const kind=map.regions[map.ids[k]]?.kind;
+    return kind===3 || kind===4 || (kind===6 && !allowPaths);
+  };
+  for(let i=0;i<turf.length;i++){
+    if(!turf[i] || wet[i])continue;
+    const x=i%map.width;
+    const edge=(x>0 && blocked(i-1)) || (x+1<map.width && blocked(i+1))
+      || blocked(i-map.width) || blocked(i+map.width);
+    (edge?boundary:interior).push(i);
+  }
+  for(const i of boundary.concat(interior)){
+    if(heads.length>=650 || !options.length)break;
     if(!turf[i] || wet[i])continue;
     const x=i%map.width,y=Math.floor(i/map.width);
     let best=candidateAt(x,y,x,y,null);
@@ -236,6 +350,7 @@ function completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted){
     }
     heads[index]=best;mark(best,1);
   }
+  improveSpacing(map,options,heads,scaleX,scaleY,turf,wet,allowPaths,permitted);
   let total=0,hit=0,outside=0,pathCells=0;
   const dryCells=[];
   for(let i=0;i<turf.length;i++){
