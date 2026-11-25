@@ -1,10 +1,11 @@
 <!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Deltser — проект автополива</title><style>/*STYLE*/</style>
 <header><b>DELTSER<span> / </span></b> Мастерская автополива</header>
-<main><section class="intro"><div><h1>Автополив по плану участка</h1><p>Загрузите план. Укажите масштаб, чтобы увидеть сопла и секторы полива.</p></div>
-<div class="upload"><button class="primary" id="browse">Загрузить план</button><input type="file" id="file" accept="image/jpeg,image/png,image/webp"><small id="formats">JPG, PNG, WebP · до 16 МБ</small></div></section>
-<p id="status" role="status">Можно начать с примера или перетащить файл на страницу.</p>
-<div class="layout"><section class="board"><div class="toolbar"><div><button id="original">Оригинал</button><button id="overlay" aria-pressed="true">Разметка</button></div><button id="demo">Пример участка</button></div>
+<main><section class="intro"><div class="intro-copy"><h1>Расчёт автополива по плану участка</h1><p>Укажите один известный размер и обведите газон. На плане появятся дождеватели и секторы полива.</p></div>
+<div class="upload"><button class="primary" id="browse">Загрузить план</button><button id="tryExample">Попробовать на примере</button><input type="file" id="file" accept="image/jpeg,image/png,image/webp"><small id="formats">JPG, PNG, WebP · до 16 МБ</small></div>
+<figure id="introDemo"><canvas id="walkthrough" width="860" height="500" role="img" aria-label="Учебный план. После обводки на каждом из двух газонов появляются секторы полива."></canvas><figcaption><span id="scene">Учебный участок с двумя газонами</span><button id="playIntro">Пауза</button></figcaption></figure></section>
+<p id="status" role="status">Можно также перетащить файл на страницу.</p>
+<div id="workspace" hidden><div class="layout"><section class="board"><div class="toolbar"><div><button id="original">Оригинал</button><button id="overlay" aria-pressed="true">Разметка</button></div><button id="demo">Пример участка</button></div>
 <p id="planResult" aria-live="polite"></p><section id="manual" hidden>
 <p id="guide" role="status"></p><small id="firstTime"></small><div id="scaleSlot"></div>
 <div id="manualActions" hidden>
@@ -28,7 +29,7 @@
 <div id="meterBox" hidden><label>Расстояние между точками, м <input id="meters" type="number" step="any" min="0.01" max="2000"></label><button id="setMeters">Сохранить размер</button></div>
 </div></div><label class="path-policy"><input type="checkbox" id="waterPaths" aria-describedby="pathHint"> Поливать дорожки</label>
 <p class="note" id="pathHint"></p>
-<div id="design"></div></aside></div><section id="report"></section></main>
+<div id="design"></div></aside></div><section id="report"></section></div></main>
 <script>
 "use strict";
 const CSV=/*CSV*/;
@@ -38,5 +39,6 @@ const CSV=/*CSV*/;
 /*PLANNER*/
 /*INPUT*/
 /*MANUAL*/
+/*INTRO*/
 /*UI*/
 </script></html>

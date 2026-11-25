@@ -558,22 +558,24 @@ function layoutChoices(panel){
   panel.append(compare);
 }
 function paintHeads(){
-  const m=state.map;
+  drawSectors(ctx,canvas,state.map,state.design,state.scale,state.activeZone);
+}
+function drawSectors(ctx,canvas,m,design,scale,activeZone){
   ctx.save();ctx.scale(canvas.width/m.width,canvas.height/m.height);
-  const visible=state.design.heads.filter(h=>!state.activeZone || state.activeZone===h.zone);
+  const visible=design.heads.filter(h=>!activeZone || activeZone===h.zone);
   for(const h of visible){
     const color=planColors[((h.zone||1)-1)%planColors.length];
     const start=h.start*Math.PI/180;
     ctx.fillStyle=color+"33";ctx.strokeStyle=color;ctx.lineWidth=.7;
-    ctx.beginPath();ctx.moveTo(h.x,h.y);ctx.ellipse(h.x,h.y,h.rPx,h.radius/(state.scale*canvas.height/m.height),0,start,start+h.arc*Math.PI/180);ctx.closePath();ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.moveTo(h.x,h.y);ctx.ellipse(h.x,h.y,h.rPx,h.radius/(scale*canvas.height/m.height),0,start,start+h.arc*Math.PI/180);ctx.closePath();ctx.fill();ctx.stroke();
   }
   // Draw markers last so overlapping sectors cannot cover a sprinkler.
   const unit=m.width/(canvas.clientWidth || canvas.width);
   ctx.fillStyle="#d72a26bb";
-  for(const index of state.design.dryCells)ctx.fillRect(index%m.width,Math.floor(index/m.width),1,1);
-  for(const [index,h] of state.design.heads.entries()){
-    if(state.activeZone && state.activeZone!==h.zone)continue;
-    const check=state.design.spacing.checks[index];
+  for(const index of design.dryCells)ctx.fillRect(index%m.width,Math.floor(index/m.width),1,1);
+  for(const [index,h] of design.heads.entries()){
+    if(activeZone && activeZone!==h.zone)continue;
+    const check=design.spacing.checks[index];
     if(check.source<0 && !check.exception){
       ctx.strokeStyle="#bd360d";ctx.lineWidth=2.5*unit;
       ctx.strokeRect(h.x-6*unit,h.y-6*unit,12*unit,12*unit);

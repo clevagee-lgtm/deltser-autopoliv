@@ -144,8 +144,7 @@ function loadImage(image,name,meta={}){
   setupManual(Boolean(meta.manual));
   refresh();
 }
-function demonstration(){
-  ++state.loadId;
+function exampleSheet(){
   const sheet=document.createElement("canvas");sheet.width=860;sheet.height=500;
   const c=sheet.getContext("2d");c.fillStyle="#fbfaf2";c.fillRect(0,0,860,500);
   c.strokeStyle="#d0d9c7";c.lineWidth=1;
@@ -158,7 +157,27 @@ function demonstration(){
   for(let x=445;x<786;x+=31)for(let y=280;y<427;y+=29){c.fillStyle="#488050";c.beginPath();c.arc(x,y,9,0,2*Math.PI);c.fill();}
   c.fillStyle="#243f35";c.font="600 16px sans-serif";c.fillText("ДОМ",513,161);c.fillText("ПРУД",696,161);
   c.fillText("38 м",413,45);c.strokeStyle="#435c4b";c.lineWidth=2;c.strokeRect(50,50,760,400);
-  c.fillText("◀",46,45);c.fillText("▶",794,45);
+  for(const x of [50,810]){c.beginPath();c.moveTo(x,36);c.lineTo(x,49);c.stroke();}
+  return sheet;
+}
+const labMode=new URLSearchParams(location.search).get("lab")==="1";
+function showWorkspace(){
+  $("workspace").hidden=false;
+  $("introDemo").hidden=true;
+  document.body.classList.add("editing");
+  stopIntro();
+}
+function demonstration(){
+  ++state.loadId;
+  const sheet=exampleSheet();
+  showWorkspace();
+  if(!labMode){
+    loadImage(sheet,"Учебный участок",{manual:true});
+    manual.started=performance.now();
+    tell("Учебный план открыт. Верхняя граница участка — 38 м.");
+    $("guide").scrollIntoView({block:"center"});
+    return;
+  }
   loadImage(sheet,"Учебный участок",{path:[[69,244],[407,244],[407,265],[69,265]],scale:0.05,scaleEvidence:"38 м по внешней границе учебного участка.",mode:"Демонстрационный план",method:"Между двумя газонами отмечена дорожка. Переключите «Поливать дорожки», чтобы сравнить расстановку."});
   tell("Открыт учебный пример. Загрузите свой план для независимой проверки.");
 }
@@ -170,13 +189,14 @@ async function upload(file){
   tell("Читаем план…");
   try{
     let image,meta={};
-    const manualUpload=new URLSearchParams(location.search).get("lab")!=="1";
+    const manualUpload=!labMode;
     if(state.server && (!manualUpload || (file.type==="application/pdf" && document.documentElement.dataset.pdf!=="true")) && typeof serverPlan==="function")({image,meta}=await serverPlan(file));
     else if(file.type==="application/pdf" || /\.pdf$/i.test(file.name)){
       if(document.documentElement.dataset.pdf!=="true")throw new Error("Для PDF откройте веб-версию или выберите изображение.");
       ({image,meta}=await readPdf(file));
     }else image=await decodeImage(file);
     if(id!==state.loadId)return;
+    showWorkspace();
     loadImage(image,file.name,{...meta,manual:manualUpload});manual.started=started;tell(manual.active?"План загружен. Укажите известный размер.":state.map.regions.length?"Разметка готова. Переключайте слои для сравнения.":"Не удалось уверенно выделить области. Откройте «Разметить контур» и укажите области полива.");
   }catch(e){if(id===state.loadId)tell("Не удалось открыть план. "+(e.message||"Проверьте формат файла."));}
 }
@@ -257,5 +277,7 @@ $("setMeters").onclick=()=>{
 };
 $("grid").onclick=()=>{if(!state.grid)return;resetEdit();state.scale=1/state.grid;state.scaleEvidence="1 метр на клетку, подтверждено вами.";state.measuring=false;state.points=[];$("meterBox").hidden=true;state.layer=true;clearDesign();refresh();tell("Масштаб применён по сетке.");};
 bindManual();
-demonstration();
+$("tryExample").onclick=demonstration;
+if(labMode)demonstration();
+else startIntro();
 initializeInputs();
