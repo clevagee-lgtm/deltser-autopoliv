@@ -57,8 +57,11 @@ function paint(){
   if(!state.layer) result="Исходное изображение. Для просмотра эскиза нажмите «Разметка».";
   else if(!state.scale) result="Разметка участка готова. Укажите масштаб для расстановки сопел.";
   else if(state.design?.heads.length) result="Сопел на плане: "+state.design.heads.length+". Покрытие выделенного газона: "+state.design.coverage+"%. Полив за границей газона в кадре: "+Math.round(state.design.outsideM2)+" м². Синие точки с белой обводкой — сопла. Цветные секторы показывают полив.";
+  else if(manual.active)result="Пока нет дождевателей. Проверьте размер и контур газона.";
   else result="Сопел на плане: 0. Проверьте масштаб и границы газона в разделе «Исправить область».";
+  if(manual.active && !state.map.regions.length)result="";
   $("planResult").textContent=result;
+  if(manual.active)drawManualVertices();
   const factor=Math.max(canvas.width,canvas.height)/650;
   ctx.lineWidth=Math.max(2,2*factor);ctx.strokeStyle="#a64124";ctx.fillStyle="#fff";
   if(state.points.length===2){ctx.beginPath();ctx.moveTo(...state.points[0]);ctx.lineTo(...state.points[1]);ctx.stroke();}
@@ -98,6 +101,7 @@ function refresh(){
   if(!$("summary").childElementCount)$("summary").textContent="Подходящие области не выделены.";
   $("caption").textContent=state.name+" · "+state.mode;
   $("pathHint").textContent=m.regions.some(r=>r.kind===6) ? "При включении струя может попадать на отмеченные дорожки." : "Чтобы учесть дорожку, отметьте её в разделе «Разметить контур»." ;
+  if(manual.active)$("pathHint").textContent="Для учёта дорожки обведите её отдельным контуром типа «Дорожка».";
   $("scaleInfo").textContent=state.scale?state.scaleEvidence:"Нужен один известный размер для расчёта в метрах.";
   $("region").replaceChildren(...m.regions.map(r=>new Option("№ "+(r.id+1)+" · "+names[r.kind],r.id)));
   $("corrections").hidden=!m.regions.length;
@@ -106,6 +110,7 @@ function refresh(){
     $("region").value=id;$("kind").value=m.regions[id].kind;
   }
   $("method").textContent=state.method;
+  if(manual.active)manualControls();
   renderMask();paint();
   if(typeof designControls==="function")designControls();
 }
@@ -118,16 +123,16 @@ function loadImage(image,name,meta={}){
   const sample=document.createElement("canvas");sample.width=Math.max(1,Math.round(canvas.width*down));sample.height=Math.max(1,Math.round(canvas.height*down));
   const sc=sample.getContext("2d");sc.fillStyle="white";sc.fillRect(0,0,sample.width,sample.height);sc.drawImage(image,0,0,sample.width,sample.height);
   pickPixels=null;
-  const map=detectRegions(sc.getImageData(0,0,sample.width,sample.height).data,sample.width,sample.height);
+  const map=meta.manual?{width:sample.width,height:sample.height,ids:new Int32Array(sample.width*sample.height).fill(-1),regions:[]}:detectRegions(sc.getImageData(0,0,sample.width,sample.height).data,sample.width,sample.height);
   if(meta.path){
     const mask=polygonMask(meta.path.map(([x,y])=>[x*map.width/image.width,y*map.height/image.height]),map.width,map.height);
     Object.assign(map,editRegionMap(map,mask,6));
   }
-  if(meta.words) useTextLabels(map,meta.words);
-  if(meta.polygons && typeof applyPolygons==="function")applyPolygons(map,meta.polygons);
+  if(!meta.manual && meta.words) useTextLabels(map,meta.words);
+  if(!meta.manual && meta.polygons && typeof applyPolygons==="function")applyPolygons(map,meta.polygons);
   Object.assign(state,{image,name,map,mode:meta.mode||"Локальный анализ",scale:meta.scale??null,scaleEvidence:meta.scaleEvidence||"",
     method:meta.method||"Цветовые подсказки. Белые зоны и объекты без уверенной границы остаются без заливки.",flow:null,points:[],selection:null,layer:true,measuring:false});
-  state.grid=meta.scale?null:findSquareGrid(image);$("grid").hidden=!state.grid;
+  state.grid=meta.manual || meta.scale?null:findSquareGrid(image);$("grid").hidden=!state.grid;
   if(state.grid && meta.gridUnit>0 && meta.gridUnit<=10){
     state.scale=meta.gridUnit/state.grid;state.scaleEvidence="Из подписи и шага сетки: "+meta.gridUnit+" м на клетку.";
   }else if(meta.reference){
@@ -136,6 +141,7 @@ function loadImage(image,name,meta={}){
     if(length>=canvas.width*.06 && ref.meters>0){state.scale=ref.meters/length;state.scaleEvidence="Оценка по размерной линии «"+ref.label+"». Проверьте её на плане.";state.points=[[a[0]*canvas.width,a[1]*canvas.height],[b[0]*canvas.width,b[1]*canvas.height]];}
   }
   $("meterBox").hidden=true;$("meters").value="";$("corrections").open=false;
+  setupManual(Boolean(meta.manual));
   refresh();
 }
 function demonstration(){
@@ -159,18 +165,19 @@ function demonstration(){
 async function decodeImage(blob){const url=URL.createObjectURL(blob);try{const img=new Image();img.src=url;await img.decode();return img;}finally{URL.revokeObjectURL(url);}}
 async function upload(file){
   if(!file)return;
-  const id=++state.loadId;
+  const id=++state.loadId,started=performance.now();
   if(file.size>16*1024*1024){tell("Файл больше 16 МБ. Выберите уменьшенную копию.");return;}
   tell("Читаем план…");
   try{
     let image,meta={};
-    if(state.server && typeof serverPlan==="function")({image,meta}=await serverPlan(file));
+    const manualUpload=new URLSearchParams(location.search).get("lab")!=="1";
+    if(state.server && (!manualUpload || (file.type==="application/pdf" && document.documentElement.dataset.pdf!=="true")) && typeof serverPlan==="function")({image,meta}=await serverPlan(file));
     else if(file.type==="application/pdf" || /\.pdf$/i.test(file.name)){
       if(document.documentElement.dataset.pdf!=="true")throw new Error("Для PDF откройте веб-версию или выберите изображение.");
       ({image,meta}=await readPdf(file));
     }else image=await decodeImage(file);
     if(id!==state.loadId)return;
-    loadImage(image,file.name,meta);tell(state.map.regions.length?"Разметка готова. Переключайте слои для сравнения.":"Не удалось уверенно выделить области. Откройте «Разметить контур» и укажите области полива.");
+    loadImage(image,file.name,{...meta,manual:manualUpload});manual.started=started;tell(manual.active?"План загружен. Укажите известный размер.":state.map.regions.length?"Разметка готова. Переключайте слои для сравнения.":"Не удалось уверенно выделить области. Откройте «Разметить контур» и укажите области полива.");
   }catch(e){if(id===state.loadId)tell("Не удалось открыть план. "+(e.message||"Проверьте формат файла."));}
 }
 $("kind").replaceChildren(...names.map((s,i)=>new Option(s,i)));
@@ -204,9 +211,10 @@ $("undoArea").onclick=()=>{
   state.map=undoMaps.pop();state.selection=null;resetEdit();clearDesign();refresh();
   $("undoArea").disabled=!undoMaps.length;tell("Последняя правка отменена.");
 };
-$("measure").onclick=()=>{resetEdit();state.measuring=!state.measuring;state.points=[];$("meterBox").hidden=true;paint();tell(state.measuring?"Нажмите на начало, затем на конец известного отрезка.":"Измерение отменено.");};
+$("measure").onclick=()=>{resetEdit();state.measuring=manual.active?true:!state.measuring;if(manual.active)endOutline();state.points=[];$("meterBox").hidden=true;if(manual.active)manualControls();paint();tell(state.measuring?"Нажмите на начало, затем на конец известного отрезка.":"Измерение отменено.");};
 canvas.onclick=e=>{
   const b=canvas.getBoundingClientRect(),x=(e.clientX-b.left)/b.width*canvas.width,y=(e.clientY-b.top)/b.height*canvas.height;
+  if(manual.active && !state.measuring){manualClick(x,y);return;}
   if(editMode){
     const m=state.map,gx=x*m.width/canvas.width,gy=y*m.height/canvas.height;
     if(editMode==="polygon"){
@@ -233,7 +241,7 @@ canvas.onclick=e=>{
   }
   if(state.measuring){
     if(state.points.length===2)state.points=[];
-    state.points.push([x,y]);paint();
+    state.points.push([x,y]);if(manual.active)manualControls();paint();
     if(state.points.length===2){$("meterBox").hidden=false;$("meters").focus();tell("Введите реальную длину отмеченного отрезка.");}
     else tell("Теперь нажмите на второй конец отрезка.");return;
   }
@@ -245,8 +253,9 @@ $("setMeters").onclick=()=>{
   if(!a || !b || !(meters>0 && meters<=2000)){tell("Введите длину отрезка в метрах от 0 до 2000.");return;}
   const px=Math.hypot(a[0]-b[0],a[1]-b[1]);if(px<3){tell("Отметьте более длинный отрезок.");return;}
   state.scale=meters/px;state.scaleEvidence=meters+" м по отмеченному вами отрезку.";state.measuring=false;$("meterBox").hidden=true;
-  state.layer=true;clearDesign();refresh();tell("Масштаб применён.");
+  state.layer=true;clearDesign();if(manual.active && !manual.outlines.length)startOutline();refresh();tell("Масштаб применён.");
 };
 $("grid").onclick=()=>{if(!state.grid)return;resetEdit();state.scale=1/state.grid;state.scaleEvidence="1 метр на клетку, подтверждено вами.";state.measuring=false;state.points=[];$("meterBox").hidden=true;state.layer=true;clearDesign();refresh();tell("Масштаб применён по сетке.");};
+bindManual();
 demonstration();
 initializeInputs();

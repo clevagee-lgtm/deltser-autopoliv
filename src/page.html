@@ -5,7 +5,17 @@
 <div class="upload"><button class="primary" id="browse">Загрузить план</button><input type="file" id="file" accept="image/jpeg,image/png,image/webp"><small id="formats">JPG, PNG, WebP · до 16 МБ</small></div></section>
 <p id="status" role="status">Можно начать с примера или перетащить файл на страницу.</p>
 <div class="layout"><section class="board"><div class="toolbar"><div><button id="original">Оригинал</button><button id="overlay" aria-pressed="true">Разметка</button></div><button id="demo">Пример участка</button></div>
-<p id="planResult" aria-live="polite"></p><div class="paper"><canvas id="plan" aria-label="Интерактивный план участка"></canvas></div><div id="caption"></div></section>
+<p id="planResult" aria-live="polite"></p><section id="manual" hidden>
+<p id="guide" role="status"></p><small id="firstTime"></small><div id="scaleSlot"></div>
+<div id="manualActions" hidden>
+<label>Тип контура <select id="manualKind"><option value="1">Газон</option><option value="7">Узкая полоса газона</option><option value="5">Капельный полив</option><option value="6">Дорожка</option><option value="4">Исключить из полива</option></select></label>
+<button id="addOutline">Добавить контур</button>
+<select id="outlineList" aria-label="Выберите контур"></select>
+<button id="adjust">Поправить вершину</button><button id="removeOutline">Удалить контур</button>
+<button id="finish" class="primary">Замкнуть контур</button><button id="cancelOutline">Отменить</button>
+<button id="restore">Отменить действие</button></div>
+<label>Масштаб просмотра <select id="zoom"><option value="1">100%</option><option value="2">200%</option><option value="3">300%</option></select></label></section>
+<div class="paper"><canvas id="plan" aria-label="Интерактивный план участка"></canvas></div><div id="caption"></div></section>
 <aside><h2>Участок</h2><div id="summary"></div><p class="note" id="method"></p>
 <details id="corrections"><summary>Исправить область</summary><p>Выберите область здесь или нажмите на неё на плане.</p><select aria-label="Область" id="region"></select><select aria-label="Тип области" id="kind"></select><button id="change">Применить</button></details>
 <details id="editPanel"><summary>Разметить контур</summary>
@@ -14,9 +24,9 @@
 <p id="editHint">Выберите способ и отметьте область на плане.</p>
 <div class="group"><button id="saveArea" disabled>Применить контур</button><button id="cancelArea" hidden>Отменить ввод</button><button id="undoArea" disabled>Отменить правку</button></div>
 </details>
-<h2>Масштаб</h2><p id="scaleInfo"></p><button id="grid" hidden>В сетке 1 клетка = 1 м</button> <button id="measure">Указать по двум точкам</button>
+<div id="scaleHome"><div id="scaleTools"><h2>Масштаб</h2><p id="scaleInfo"></p><button id="grid" hidden>В сетке 1 клетка = 1 м</button> <button id="measure">Указать по двум точкам</button>
 <div id="meterBox" hidden><label>Расстояние между точками, м <input id="meters" type="number" step="any" min="0.01" max="2000"></label><button id="setMeters">Сохранить размер</button></div>
-<label class="path-policy"><input type="checkbox" id="waterPaths" aria-describedby="pathHint"> Поливать дорожки</label>
+</div></div><label class="path-policy"><input type="checkbox" id="waterPaths" aria-describedby="pathHint"> Поливать дорожки</label>
 <p class="note" id="pathHint"></p>
 <div id="design"></div></aside></div><section id="report"></section></main>
 <script>
@@ -27,5 +37,6 @@ const CSV=/*CSV*/;
 /*CONTOURS*/
 /*PLANNER*/
 /*INPUT*/
+/*MANUAL*/
 /*UI*/
 </script></html>

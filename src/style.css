@@ -6,3 +6,11 @@ button,select,input{font:inherit;padding:9px 13px;border:1px solid #bfcfc4;borde
 .path-policy{display:flex;align-items:center;gap:8px;margin-top:1.2rem;cursor:pointer;font-weight:600}.path-policy input{width:1.15rem;height:1.15rem;margin:0;accent-color:#145a40}
 @media(max-width:760px){.layout{display:block}aside{width:100%;margin-top:12px}.toolbar button{padding:7px}.board,aside{padding:12px}main{padding-top:18px}}
 @media print{header,button,.toolbar,.upload,details,input,select,#status,#meterBox{display:none!important}.layout{display:block}.board,aside,#report{border:0;padding:0;width:100%;margin-top:12px}.paper{background:none;min-height:0}canvas{width:auto;max-width:100%;max-height:17cm;margin-inline:auto}main{padding:0}h1{font-size:19pt}tr{break-inside:avoid}#report{overflow:visible!important}}
+
+.manual-plan .layout{display:block}
+.manual-plan aside{width:100%;margin-top:12px}
+.manual-plan #editPanel,.manual-plan #corrections,.manual-plan #method,.manual-plan #original,.manual-plan #overlay{display:none}
+.manual-plan .paper{overflow:auto;max-height:75vh}
+#manual button,#manual select{min-height:44px;margin:3px 0}
+#guide{font-weight:650}
+#scaleSlot h2{display:none}
