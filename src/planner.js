@@ -399,10 +399,21 @@ function completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted){
 }
 // A complete, axis-aligned lawn can be laid out as one grid. A corner or edge
 // head must survive cleanup even when another sector already wets its position.
-function rectangleGrid(reg,table,scaleX,scaleY,limit){
+function rectangleGrid(reg,table,scaleX,scaleY,limit,permitted){
   const nx=reg.maxX-reg.minX,ny=reg.maxY-reg.minY;
-  if(reg.kind!==1 || nx<1 || ny<1 || reg.count!==(nx+1)*(ny+1))return null;
-  const width=nx*scaleX,height=ny*scaleY;
+  if(reg.kind!==1 || nx<1 || ny<1)return null;
+  const solid=reg.count===(nx+1)*(ny+1);
+  if(!solid && !reg.rectangle)return null;
+  let x0=reg.minX+.5,y0=reg.minY+.5,width=nx*scaleX,height=ny*scaleY,rotation=0;
+  if(!solid){
+    const [a,b,,d]=reg.rectangle.corners;
+    [x0,y0]=a;
+    const dx=(b[0]-x0)*scaleX,dy=(b[1]-y0)*scaleY;
+    width=Math.hypot(dx,dy);
+    height=Math.hypot((d[0]-x0)*scaleX,(d[1]-y0)*scaleY);
+    rotation=Math.atan2(dy,dx);
+  }
+  const ux=Math.cos(rotation),uy=Math.sin(rotation);
   const groups=new Map();
   for(const row of table){
     if(row.bar!==operatingBar || ![90,180,360].includes(row.arc))continue;
@@ -435,8 +446,10 @@ function rectangleGrid(reg,table,scaleX,scaleY,limit){
       // Reaching each grid cell's centre from its nearest corner guarantees
       // geometric coverage throughout that cell. Reject unsupported settings.
       if(radius+1e-9<minimum || radius+1e-9<Math.hypot(dx,dy)/2)continue;
-      heads.push({...nozzle,x:reg.minX+.5+i*nx/columns,y:reg.minY+.5+j*ny/rows,
-        radius,nominalRadius:nozzle.radius,rPx:radius/scaleX,start,region:reg.id,perimeterGrid:true});
+      const head={...nozzle,x:x0+(i*dx*ux-j*dy*uy)/scaleX,y:y0+(i*dx*uy+j*dy*ux)/scaleY,
+        radius,nominalRadius:nozzle.radius,rPx:radius/scaleX,start:(start+rotation*180/Math.PI+360)%360,
+        region:reg.id,perimeterGrid:true};
+      if(permitted(head))heads.push(head);
     }
     if(heads.length!==count)continue;
     // Check immediate neighbours on this lawn, independent of other regions.
@@ -462,7 +475,7 @@ function proposeHeads(map,table,scaleX,scaleY,flowLimit,allowPaths=false,minInsi
     const width=(reg.maxX-reg.minX+1)*scaleX,height=(reg.maxY-reg.minY+1)*scaleY;
     const area=reg.count*scaleX*scaleY;
     if(heads.length>=650){warnings.push("Достигнут предел числа сопел в эскизе.");break;}
-    const grid=rectangleGrid(reg,table,scaleX,scaleY,650-heads.length);
+    const grid=rectangleGrid(reg,table,scaleX,scaleY,650-heads.length,permitted);
     if(grid){heads.push(...grid);continue;}
     const models=table.filter(r=>r.bar===operatingBar && r.arc===180 && r.radius<=Math.min(width,height)*1.25 && Math.PI*r.radius*r.radius/8<=area)
       .sort((a,b)=>b.radius-a.radius);

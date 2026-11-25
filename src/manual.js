@@ -12,6 +12,11 @@ function setupManual(active){
   $("firstTime").textContent="";
   state.mode="Ручная обводка";
 }
+function fittedDraft(points){
+  const {width,height}=state.map;
+  const corners=fitLawnRectangle(points,canvas.width/width,canvas.height/height);
+  return corners && corners.every(([x,y])=>x>=0 && y>=0 && x<=width && y<=height)?corners:null;
+}
 function manualControls(){
   const {draft,outlines,editing,vertex}=manual;
   $("manualActions").hidden=!state.scale || state.measuring;
@@ -25,11 +30,13 @@ function manualControls(){
   for(const id of ["outlineList","adjust","removeOutline"])$(id).hidden=Boolean(draft)||!outlines.length;
   $("restore").hidden=Boolean(draft)||!manual.history.length;
   $("manualKind").disabled=editing>=0;
+  $("alignOption").hidden=!draft || Number($("manualKind").value)!==1 || !fittedDraft(draft);
 }
 function startOutline(index=-1){
   manual.editing=index;manual.vertex=-1;
   manual.draft=index<0?[]:manual.outlines[index].points.slice();
   if(index>=0)$("manualKind").value=manual.outlines[index].kind;
+  $("alignRectangle").checked=index<0 || manual.outlines[index].align!==false;
   manualControls();paint();
 }
 function endOutline(){
@@ -39,7 +46,22 @@ function endOutline(){
 function rebuildOutlines(){
   const {width,height}=state.map;
   let map={width,height,ids:new Int32Array(width*height).fill(-1),regions:[]};
-  for(const {points,kind} of manual.outlines)map=editRegionMap(map,polygonMask(points,width,height),kind);
+  for(const {points,kind,align} of manual.outlines){
+    const corners=align && kind===1 ? fittedDraft(points) : null;
+    const mask=polygonMask(corners||points,width,height);
+    let rectangle=null;
+    if(corners){
+      const original=polygonMask(points,width,height);
+      let cells=0,clipped=false;
+      for(let i=0;i<mask.length;i++){
+        if(!mask[i])continue;
+        if(!original[i] && map.ids[i]>=0){mask[i]=0;clipped=true;}
+        else cells++;
+      }
+      if(!clipped)rectangle={corners,cells};
+    }
+    map=editRegionMap(map,mask,kind,rectangle);
+  }
   state.map=map;state.selection=null;
   $("outlineList").replaceChildren(...manual.outlines.map((o,i)=>new Option((i+1)+". "+names[o.kind],i)));
   endOutline();clearDesign();refresh();
@@ -65,16 +87,19 @@ function manualClick(x,y){
 function drawManualVertices(){
   const points=manual.draft;
   if(!points?.length)return;
-  const pixels=points.map(([x,y])=>[x*canvas.width/state.map.width,y*canvas.height/state.map.height]);
+  const fitted=Number($("manualKind").value)===1 && $("alignRectangle").checked && fittedDraft(points);
+  const pixels=(fitted||points).map(([x,y])=>[x*canvas.width/state.map.width,y*canvas.height/state.map.height]);
   const unit=canvas.width/canvas.getBoundingClientRect().width;
   ctx.save();ctx.strokeStyle="#932071";ctx.lineWidth=2*unit;
   ctx.beginPath();pixels.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
-  if(manual.editing>=0)ctx.closePath();
+  if(manual.editing>=0 || fitted)ctx.closePath();
   ctx.stroke();
-  pixels.forEach(([x,y],i)=>{ctx.fillStyle=i===manual.vertex?"#ffba41":"white";ctx.beginPath();ctx.arc(x,y,4*unit,0,2*Math.PI);ctx.fill();ctx.stroke();});
+  points.forEach(([gx,gy],i)=>{const x=gx*canvas.width/state.map.width,y=gy*canvas.height/state.map.height;ctx.fillStyle=i===manual.vertex?"#ffba41":"white";ctx.beginPath();ctx.arc(x,y,4*unit,0,2*Math.PI);ctx.fill();ctx.stroke();});
   ctx.restore();
 }
 function bindManual(){
+  $("alignRectangle").onchange=paint;
+  $("manualKind").onchange=()=>{manualControls();paint();};
   $("zoom").onchange=()=>{canvas.style.width=Number($("zoom").value)*100+"%";paint();};
   $("addOutline").onclick=()=>startOutline();
   $("adjust").onclick=()=>startOutline(Number($("outlineList").value));
@@ -85,7 +110,7 @@ function bindManual(){
       $("guide").textContent="Отметьте углы так, чтобы между ними была площадь.";return;
     }
     const next=manual.outlines.slice();
-    next[manual.editing<0?next.length:manual.editing]={points,kind:Number($("manualKind").value)};
+    next[manual.editing<0?next.length:manual.editing]={points,kind:Number($("manualKind").value),align:$("alignRectangle").checked};
     changeOutlines(next);
     if(state.design?.heads.length && !$("firstTime").textContent){
       const seconds=Math.round((performance.now()-manual.started)/1000);

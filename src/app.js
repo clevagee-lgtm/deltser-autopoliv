@@ -174,7 +174,12 @@ function demonstration(){
   if(!labMode){
     loadImage(sheet,"Учебный участок",{manual:true});
     manual.started=performance.now();
-    tell("Учебный план открыт. Верхняя граница участка — 38 м.");
+    state.scale=38/760;
+    state.scaleEvidence="38 м по всей верхней границе участка. Ширина газона — 16,9 м.";
+    state.measuring=false;
+    startOutline();
+    refresh();
+    tell("Масштаб учебного плана задан. Обведите один из двух газонов.");
     $("guide").scrollIntoView({block:"center"});
     return;
   }
