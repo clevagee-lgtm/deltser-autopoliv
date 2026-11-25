@@ -11,7 +11,7 @@ test('geometric draft respects supply and nozzle table',()=>{
  assert.ok(d.heads.length>2 && d.zones.length>1);
  assert.ok(d.zones.every(z=>z.flow<=8));
  assert.ok(d.coverage>75);
- assert.ok(d.heads.every(h=>table.some(r=>r.model===h.model&&r.arc===h.arc&&r.flow===h.flow&&r.radius===h.radius&&r.bar===h.bar)));
+ assert.ok(d.heads.every(h=>table.some(r=>r.model===h.model&&r.arc===h.arc&&r.flow===h.flow&&r.radius===(h.nominalRadius??h.radius)&&r.bar===h.bar)));
 });
 test('water and missing scale do not produce heads',()=>{
  assert.equal(c.proposeHeads(map(3),table,.22,.22,8).heads.length,0);
@@ -78,6 +78,10 @@ test('path permission changes the layout while protecting buildings and water',(
   }
   rect(1,4,5,28,30);rect(6,29,5,32,30);rect(1,33,5,57,30);
   rect(4,58,5,60,30);rect(3,4,31,57,32);
+  // The notches leave an irregular border where permission to wet the path matters.
+  for(const [x,id] of [[28,0],[33,2]]){
+    ids[5*width+x]=-1;regions[id].count--;
+  }
   const plan={width,height,ids,regions},sx=.21,sy=.19;
   const strict=c.proposeHeads(plan,table,sx,sy,10),allowed=c.proposeHeads(plan,table,sx,sy,10,true);
   for(const result of [strict,allowed]){
@@ -98,7 +102,7 @@ test('path permission changes the layout while protecting buildings and water',(
       }
     }
     assert.equal(result.hit,hit);
-    assert.equal(result.total,2*25*26);
+    assert.equal(result.total,2*25*26-2);
     assert.equal(result.pathM2,path*sx*sy);
   }
   assert.equal(strict.pathM2,0);
@@ -165,4 +169,24 @@ test('regrouping the selected layout clears old supply warnings and zone numbers
   assert.equal(d.zones.length,0);assert.equal(d.warnings.length,0);
   assert.ok(d.heads.every(h=>h.zone===null));
   assert.deepEqual(d.heads.map(h=>[h.model,h.x,h.y,h.start]),before);
+});
+
+test('each teaching lawn keeps its own paired perimeter rows and dry borders',()=>{
+  const width=210,height=190,ids=new Int32Array(width*height).fill(-1),regions=[];
+  function rectangle(kind,top,bottom){
+    const id=regions.length,left=10,right=174;
+    regions.push({kind,id,minX:left,maxX:right,minY:top,maxY:bottom,count:(right-left+1)*(bottom-top+1)});
+    for(let y=top;y<=bottom;y++)ids.fill(id,y*width+left,y*width+right+1);
+  }
+  rectangle(1,5,90);rectangle(6,91,95);rectangle(1,96,175);
+  for(const allow of [false,true]){
+    const result=c.proposeHeads({width,height,ids,regions},table,.102,.102,null,allow);
+    assert.equal(result.coverage,100);assert.equal(result.pathM2,0);assert.equal(result.outsideM2,0);
+    for(const r of regions.filter(r=>r.kind===1)){
+      const heads=result.heads.filter(h=>h.region===r.id);
+      assert.equal(heads.filter(h=>h.arc===90).length,4);
+      assert.ok(heads.every(h=>h.perimeterGrid && h.radius<=h.nominalRadius && h.radius>=h.nominalRadius*.75-1e-9));
+      for(const h of heads)assert.ok(heads.some(n=>c.reachesHead(n,h,.102,.102)));
+    }
+  }
 });

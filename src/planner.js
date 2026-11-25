@@ -107,7 +107,7 @@ function improveSpacing(map,options,heads,scaleX,scaleY,turf,wet,allowPaths,perm
   function prune(){
     for(let i=heads.length-1;i>=0;i--){
       const h=heads[i];
-      if(!h)continue;
+      if(!h || h.perimeterGrid)continue;
       if(heads.some((target,j)=>target && !optional(target) && incoming[j]===1 && reaches(h,target)))continue;
       if(!walk(h,k=>!(turf[k] && wet[k]===1)))continue;
       walk(h,k=>{wet[k]--;});updateLinks(h,-1);heads[i]=null;
@@ -133,6 +133,7 @@ function improveSpacing(map,options,heads,scaleX,scaleY,turf,wet,allowPaths,perm
     return null;
   }
   function adjust(source,index,target){
+    if(source.perimeterGrid)return false;
     const required=heads.filter((h,j)=>h && !optional(h) && incoming[j]===1 && reaches(source,h));
     const requiredCells=[];
     walk(source,k=>{if(turf[k] && wet[k]===1)requiredCells.push({x:k%map.width+.5,y:Math.floor(k/map.width)+.5});});
@@ -322,7 +323,9 @@ function completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted){
       }
     }
     for(let index=heads.length-1;index>=first;index--){
-      const head=heads[index], bounds=new Float64Array(rays);
+      const head=heads[index];
+      if(head.perimeterGrid)continue;
+      const bounds=new Float64Array(rays);
       let reach=0, spill=0, needed=false;
       function requirePoint(x,y){
         needed=true;
@@ -394,6 +397,60 @@ function completeCoverage(map,table,scaleX,scaleY,heads,allowPaths,permitted){
   }
   return {total,hit,dryCells,dryM2:dryCells.length*scaleX*scaleY,coverage:total?Math.floor(1000*hit/total)/10:null,pathM2:pathCells*scaleX*scaleY,outsideM2:outside*scaleX*scaleY};
 }
+// A complete, axis-aligned lawn can be laid out as one grid. A corner or edge
+// head must survive cleanup even when another sector already wets its position.
+function rectangleGrid(reg,table,scaleX,scaleY,limit){
+  const nx=reg.maxX-reg.minX,ny=reg.maxY-reg.minY;
+  if(reg.kind!==1 || nx<1 || ny<1 || reg.count!==(nx+1)*(ny+1))return null;
+  const width=nx*scaleX,height=ny*scaleY;
+  const groups=new Map();
+  for(const row of table){
+    if(row.bar!==operatingBar || ![90,180,360].includes(row.arc))continue;
+    if(!groups.has(row.model))groups.set(row.model,new Map());
+    groups.get(row.model).set(row.arc,row);
+  }
+  let best=null;
+  for(const nozzles of groups.values()){
+    const corner=nozzles.get(90),side=nozzles.get(180);
+    if(!corner || !side)continue;
+    const range=Math.min(corner.radius,side.radius);
+    const columns=Math.ceil(width/range),rows=Math.ceil(height/range);
+    const count=(columns+1)*(rows+1);
+    if(count>limit || (best && count>=best.length))continue;
+    const dx=width/columns,dy=height/rows;
+    const heads=[];
+    for(let j=0;j<=rows;j++)for(let i=0;i<=columns;i++){
+      const left=i===0,right=i===columns,top=j===0,bottom=j===rows;
+      const xSide=left||right,ySide=top||bottom;
+      const arc=xSide && ySide?90:xSide || ySide?180:360;
+      const nozzle=nozzles.get(arc);
+      if(!nozzle)continue;
+      const start=top?(right?90:0):bottom?(left?270:180):left?270:right?90:0;
+      // Distance to the nearest border in a direction the sector actually sprays.
+      const clearance=Math.min(left||right?width:Math.min(i,columns-i)*dx,
+                               top||bottom?height:Math.min(j,rows-j)*dy);
+      const adjustable=["MP-1000","MP-2000","MP-3000","MP-800SR"].includes(nozzle.model);
+      const minimum=nozzle.radius*(adjustable ? 0.75 : 1);
+      const radius=Math.min(nozzle.radius,clearance,Math.max(minimum,dx,dy));
+      // Reaching each grid cell's centre from its nearest corner guarantees
+      // geometric coverage throughout that cell. Reject unsupported settings.
+      if(radius+1e-9<minimum || radius+1e-9<Math.hypot(dx,dy)/2)continue;
+      heads.push({...nozzle,x:reg.minX+.5+i*nx/columns,y:reg.minY+.5+j*ny/rows,
+        radius,nominalRadius:nozzle.radius,rPx:radius/scaleX,start,region:reg.id,perimeterGrid:true});
+    }
+    if(heads.length!==count)continue;
+    // Check immediate neighbours on this lawn, independent of other regions.
+    const supported=heads.every((h,k)=>{
+      const column=k%(columns+1);
+      const neighbours=[column>0?heads[k-1]:null,column<columns?heads[k+1]:null,
+        heads[k-columns-1],heads[k+columns+1]].filter(Boolean);
+      return neighbours.some(n=>reachesHead(n,h,scaleX,scaleY)) &&
+        neighbours.some(n=>reachesHead(h,n,scaleX,scaleY));
+    });
+    if(supported)best=heads;
+  }
+  return best;
+}
 function proposeHeads(map,table,scaleX,scaleY,flowLimit,allowPaths=false,minInside=.88) {
   const heads=[],warnings=[],zones=[];
   if(!(scaleX>0 && scaleY>0))return {heads,warnings:["Укажите масштаб."],zones};
@@ -405,6 +462,8 @@ function proposeHeads(map,table,scaleX,scaleY,flowLimit,allowPaths=false,minInsi
     const width=(reg.maxX-reg.minX+1)*scaleX,height=(reg.maxY-reg.minY+1)*scaleY;
     const area=reg.count*scaleX*scaleY;
     if(heads.length>=650){warnings.push("Достигнут предел числа сопел в эскизе.");break;}
+    const grid=rectangleGrid(reg,table,scaleX,scaleY,650-heads.length);
+    if(grid){heads.push(...grid);continue;}
     const models=table.filter(r=>r.bar===operatingBar && r.arc===180 && r.radius<=Math.min(width,height)*1.25 && Math.PI*r.radius*r.radius/8<=area)
       .sort((a,b)=>b.radius-a.radius);
     if(!models.length)continue;
@@ -589,11 +648,11 @@ function downloadFile(name,type,text){
  const url=URL.createObjectURL(new Blob([text],{type}));const link=document.createElement("a");link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),3000);
 }
 function headCSV(){
- const lines=["Номер;Модель;Сектор, град;Начало по часовой от правой оси, град;Радиус, м;Расход, л/мин;Условная зона;X от левого края, м;Y от верхнего края, м;Номер сопла, доливающего до этого;Исключение или замечание"];
+ const lines=["Номер;Модель;Сектор, град;Начало по часовой от правой оси, град;Настроенный радиус, м;Табличный расход, л/мин;Условная зона;X от левого края, м;Y от верхнего края, м;Номер сопла, доливающего до этого;Исключение или замечание"];
  const m=state.map;
  state.design.heads.forEach((h,i)=>{
    const check=state.design.spacing.checks[i];
-   lines.push([i+1,h.model,h.arc,h.start,h.radius,h.flow,h.zone||"",+(h.x*canvas.width/m.width*state.scale).toFixed(2),+(h.y*canvas.height/m.height*state.scale).toFixed(2),check.source<0?"":check.source+1,check.exception||(check.source<0?"Нет долива":"")].join(";"));
+   lines.push([i+1,h.model,h.arc,h.start,+h.radius.toFixed(3),h.flow,h.zone||"",+(h.x*canvas.width/m.width*state.scale).toFixed(2),+(h.y*canvas.height/m.height*state.scale).toFixed(2),check.source<0?"":check.source+1,check.exception||(check.source<0?"Нет долива":"")].join(";"));
  });
  downloadFile("Deltser-sopla.csv","text/csv;charset=utf-8","\uFEFF"+lines.join("\r\n"));
 }
@@ -615,6 +674,11 @@ function designControls(){
     d.append(audit);
   }
   if(n){
+    if(result.heads.some(h=>h.radius<h.nominalRadius-1e-8)){
+      const settings=document.createElement("p");
+      settings.textContent="Для MP Rotator указан настроенный радиус. При расчёте подачи использован табличный расход до уменьшения радиуса.";
+      d.append(settings);
+    }
     layoutChoices(d);
     const label=document.createElement("label");label.textContent="Доступная подача при рабочем давлении, л/мин";
     const flow=document.createElement("input");flow.type="number";flow.step="any";flow.min="0.1";flow.max="1500";flow.value=state.flow||"";flow.placeholder="Если известна";label.append(flow);d.append(label);
@@ -635,7 +699,7 @@ function designControls(){
     const report=$("report");report.replaceChildren();const heading=document.createElement("h2");heading.textContent="Предварительная ведомость сопел";report.append(heading);
     const tbl=document.createElement("table");
     const tr=tbl.createTHead().insertRow();for(const s of ["Модель","Сектор","Радиус","Расход на сопло","Кол-во","Зона"]){const th=document.createElement("th");th.textContent=s;tr.append(th);}
-    const groups=new Map();for(const h of result.heads){const k=[h.model,h.arc,h.radius,h.flow,h.zone||"—"].join("/");groups.set(k,(groups.get(k)||0)+1);}
+    const groups=new Map();for(const h of result.heads){const k=[h.model,h.arc,+h.radius.toFixed(2),h.flow,h.zone||"—"].join("/");groups.set(k,(groups.get(k)||0)+1);}
     const body=tbl.createTBody();
     for(const [k,count] of groups){const [model,arc,radius,flow,zone]=k.split("/");const row=body.insertRow();for(const s of [model,arc+"°",radius+" м",flow+" л/мин",count,zone])row.insertCell().textContent=s;}
     report.append(tbl);
